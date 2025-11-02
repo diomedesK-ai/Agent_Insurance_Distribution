@@ -45,25 +45,27 @@ export async function POST(req: NextRequest) {
           results: Object.fromEntries(results)
         });
       } else {
-        // Execute with single agent
+        // Execute with single agent - default to orchestrator if none selected
+        const selectedAgentId = decision.selectedAgent || 'orchestrator';
+        
         if (stream) {
           return streamSingleAgent(
             orchestrator,
-            decision.selectedAgent,
+            selectedAgentId,
             query,
             context,
             decision
           );
         } else {
           const response = await orchestrator.executeWithAgent(
-            decision.selectedAgent,
+            selectedAgentId,
             query,
             context
           );
 
           return NextResponse.json({
             type: 'single-agent',
-            agentId: decision.selectedAgent,
+            agentId: selectedAgentId,
             decision,
             response
           });

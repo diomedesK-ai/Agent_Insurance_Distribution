@@ -1,7 +1,9 @@
 'use client';
 
-import { useState } from 'react';
-import { Clock, Phone, Mail, MessageSquare, Calendar, TrendingUp, Zap, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Clock, Phone, Mail, MessageSquare, Calendar, TrendingUp, Zap, CheckCircle2, XCircle, AlertCircle, ChevronDown, Send, Database, Download, Sparkles } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface Lead {
   id: string;
@@ -38,6 +40,111 @@ interface Lead {
 
 export default function LeadOrchestrator() {
   const [view, setView] = useState<'timeline' | 'priority'>('priority');
+  const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
+  const [generatingPitch, setGeneratingPitch] = useState<string | null>(null);
+  const [generatedPitch, setGeneratedPitch] = useState<{[key: string]: string}>({});
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('.action-menu-container')) {
+        setOpenActionMenu(null);
+      }
+    };
+
+    if (openActionMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [openActionMenu]);
+
+  const handleGeneratePitch = async (lead: Lead) => {
+    setOpenActionMenu(null);
+    setGeneratingPitch(lead.id);
+    
+    try {
+      console.log('🎯 === GENERATING PITCH FOR LEAD ===');
+      console.log('📊 Lead Data:', lead);
+      
+      const query = `Generate a personalized insurance sales pitch for ${lead.name}.
+
+**Lead Profile:**
+- Score: ${lead.score}/100 (${lead.status} lead)
+- Last Contact: ${lead.lastContact}
+- Buying Signals: ${lead.aiInsights.buyingSignals.join(', ')}
+- Concerns: ${lead.aiInsights.concerns.join(', ')}
+- Success Probability: ${lead.aiInsights.successProbability}%
+- Optimal Contact: ${lead.aiInsights.optimalDay} at ${lead.aiInsights.optimalTime}
+- Next Best Action: ${lead.nextBestAction.type.toUpperCase()} - ${lead.nextBestAction.reason}
+
+**Please provide:**
+1. **Opening Hook** (1-2 sentences to grab attention based on their signals)
+2. **Value Proposition** (3-4 key benefits addressing their concerns)
+3. **Objection Handling** (Responses to their specific concerns)
+4. **Call to Action** (Clear next step with urgency)
+
+Format in markdown with clear headings.`;
+
+      console.log('💬 Pitch Query:', query);
+
+      const response = await fetch('/api/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: query,
+          location: 'singapore',
+          conversationHistory: [],
+        }),
+      });
+
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let fullResponse = '';
+
+      if (reader) {
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data === '[DONE]') continue;
+
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.type === 'content' && parsed.chunk) {
+                  fullResponse += parsed.chunk;
+                }
+              } catch (e) {
+                // Skip invalid JSON
+              }
+            }
+          }
+        }
+      }
+
+      console.log('✅ Generated Pitch:', fullResponse);
+      setGeneratedPitch(prev => ({ ...prev, [lead.id]: fullResponse }));
+      
+    } catch (error) {
+      console.error('❌ Error generating pitch:', error);
+      setGeneratedPitch(prev => ({ 
+        ...prev, 
+        [lead.id]: '❌ Failed to generate pitch. Please try again.' 
+      }));
+    } finally {
+      setGeneratingPitch(null);
+    }
+  };
 
   const leads: Lead[] = [
     {
@@ -350,10 +457,8 @@ export default function LeadOrchestrator() {
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-start space-x-4 flex-1">
                   {/* Priority Indicator */}
-                  <div className={`${getPriorityColor(lead.nextBestAction.priority)} p-0.5 rounded-full mt-1`}>
-                    <div className="bg-white dark:bg-background rounded-full p-2">
-                      <Zap className={`h-4 w-4 ${getPriorityColor(lead.nextBestAction.priority).replace('bg-', 'text-')}`} />
-                    </div>
+                  <div className={`bg-transparent border-2 ${getPriorityColor(lead.nextBestAction.priority).replace('bg-', 'border-')} rounded-full p-2 mt-1`}>
+                    <Zap className={`h-4 w-4 ${getPriorityColor(lead.nextBestAction.priority).replace('bg-', 'text-')}`} />
                   </div>
 
                   <div className="flex-1">
@@ -368,8 +473,10 @@ export default function LeadOrchestrator() {
                     {/* Next Best Action */}
                     <div className="bg-primary/10 border border-primary/20 rounded-lg p-4 mb-4">
                       <div className="flex items-start space-x-3">
-                        <div className="bg-primary p-2 rounded-lg">
-                          {getActionIcon(lead.nextBestAction.type)}
+                        <div className="bg-transparent border-2 border-blue-500 p-2 rounded-full">
+                          <div className="text-blue-500">
+                            {getActionIcon(lead.nextBestAction.type)}
+                          </div>
                         </div>
                         <div className="flex-1">
                           <div className="flex items-center space-x-2 mb-1">
@@ -383,9 +490,59 @@ export default function LeadOrchestrator() {
                           </div>
                           <p className="text-sm text-foreground">{lead.nextBestAction.reason}</p>
                         </div>
-                        <button className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-all">
-                          Take Action
-                        </button>
+                        <div className="relative action-menu-container">
+                          <button 
+                            onClick={() => setOpenActionMenu(openActionMenu === lead.id ? null : lead.id)}
+                            className="px-6 py-2 bg-transparent border-2 border-blue-500 text-blue-500 rounded-full text-sm font-medium hover:bg-blue-500/10 transition-all flex items-center space-x-2"
+                          >
+                            <span>Take Action</span>
+                            <ChevronDown className={`h-4 w-4 transition-transform ${openActionMenu === lead.id ? 'rotate-180' : ''}`} />
+                          </button>
+                          
+                          {/* Dropdown Menu */}
+                          {openActionMenu === lead.id && (
+                            <div className="absolute right-0 mt-2 w-56 bg-popover border border-border rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                              <button
+                                onClick={() => {
+                                  setOpenActionMenu(null);
+                                  alert(`Sending ${lead.name} to WhatsApp...`);
+                                }}
+                                className="w-full px-4 py-3 text-left text-sm text-popover-foreground hover:bg-accent transition-colors flex items-center space-x-3"
+                              >
+                                <Send className="h-4 w-4 text-green-500" />
+                                <span>Send to My WhatsApp</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setOpenActionMenu(null);
+                                  alert(`Adding ${lead.name} to CRM...`);
+                                }}
+                                className="w-full px-4 py-3 text-left text-sm text-popover-foreground hover:bg-accent transition-colors flex items-center space-x-3"
+                              >
+                                <Database className="h-4 w-4 text-blue-500" />
+                                <span>Add to CRM</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setOpenActionMenu(null);
+                                  alert(`Exporting ${lead.name} data...`);
+                                }}
+                                className="w-full px-4 py-3 text-left text-sm text-popover-foreground hover:bg-accent transition-colors flex items-center space-x-3"
+                              >
+                                <Download className="h-4 w-4 text-purple-500" />
+                                <span>Export</span>
+                              </button>
+                              <button
+                                onClick={() => handleGeneratePitch(lead)}
+                                disabled={generatingPitch === lead.id}
+                                className="w-full px-4 py-3 text-left text-sm text-popover-foreground hover:bg-accent transition-colors flex items-center space-x-3 border-t border-border disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                <Sparkles className={`h-4 w-4 text-amber-500 ${generatingPitch === lead.id ? 'animate-spin' : ''}`} />
+                                <span>{generatingPitch === lead.id ? 'Generating...' : 'Generate Pitch'}</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -452,6 +609,33 @@ export default function LeadOrchestrator() {
                         </div>
                       </div>
                     </div>
+
+                    {/* Generated Pitch */}
+                    {generatedPitch[lead.id] && (
+                      <div className="mt-6 bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950 dark:to-orange-950 border-2 border-amber-300 dark:border-amber-700 rounded-xl p-6">
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center space-x-2">
+                            <Sparkles className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                            <span className="text-sm font-bold text-amber-900 dark:text-amber-100">AI-Generated Personalized Pitch</span>
+                          </div>
+                          <button
+                            onClick={() => setGeneratedPitch(prev => {
+                              const updated = { ...prev };
+                              delete updated[lead.id];
+                              return updated;
+                            })}
+                            className="text-xs text-amber-700 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-100 transition-colors"
+                          >
+                            ✕ Close
+                          </button>
+                        </div>
+                        <div className="prose prose-sm dark:prose-invert max-w-none">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {generatedPitch[lead.id]}
+                          </ReactMarkdown>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Talking Points */}
                     {lead.talkingPoints && (

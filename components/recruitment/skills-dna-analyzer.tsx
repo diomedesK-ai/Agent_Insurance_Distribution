@@ -683,14 +683,14 @@ export default function SkillsDNAAnalyzer() {
           {/* Sidebar */}
           <div className="space-y-4">
             {/* Strengths */}
-            <div className="bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 rounded-xl p-6">
+            <div className="bg-green-500/5 dark:bg-green-500/5 border border-green-500/20 dark:border-green-500/20 rounded-xl p-6">
               <h4 className="text-sm font-semibold text-green-900 dark:text-green-100 mb-3 flex items-center space-x-2">
                 <CheckCircle2 className="h-4 w-4" />
                 <span>Key Strengths</span>
               </h4>
               <div className="space-y-2">
                 {selectedCandidate.strengths.map((strength, idx) => (
-                  <div key={idx} className="text-xs text-green-900 dark:text-green-100 bg-green-100 dark:bg-green-900 p-2 rounded">
+                  <div key={idx} className="text-xs text-green-900 dark:text-green-100 bg-green-500/10 dark:bg-green-500/10 p-2 rounded">
                     {strength}
                   </div>
                 ))}
@@ -698,14 +698,14 @@ export default function SkillsDNAAnalyzer() {
             </div>
 
             {/* Development Areas */}
-            <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-xl p-6">
+            <div className="bg-amber-500/5 dark:bg-amber-500/5 border border-amber-500/20 dark:border-amber-500/20 rounded-xl p-6">
               <h4 className="text-sm font-semibold text-amber-900 dark:text-amber-100 mb-3 flex items-center space-x-2">
                 <AlertTriangle className="h-4 w-4" />
                 <span>Development Areas</span>
               </h4>
               <div className="space-y-2">
                 {selectedCandidate.gaps.map((gap, idx) => (
-                  <div key={idx} className="text-xs text-amber-900 dark:text-amber-100 bg-amber-100 dark:bg-amber-900 p-2 rounded">
+                  <div key={idx} className="text-xs text-amber-900 dark:text-amber-100 bg-amber-500/10 dark:bg-amber-500/10 p-2 rounded">
                     {gap}
                   </div>
                 ))}
@@ -713,7 +713,7 @@ export default function SkillsDNAAnalyzer() {
             </div>
 
             {/* Similar Profile */}
-            <div className="bg-purple-50 dark:bg-purple-950 border border-purple-200 dark:border-purple-800 rounded-xl p-6">
+            <div className="bg-purple-500/5 dark:bg-purple-500/5 border border-purple-500/20 dark:border-purple-500/20 rounded-xl p-6">
               <h4 className="text-sm font-semibold text-purple-900 dark:text-purple-100 mb-3 flex items-center space-x-2">
                 <Star className="h-4 w-4" />
                 <span>Similar to Top Performer</span>

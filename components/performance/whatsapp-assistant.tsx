@@ -12,6 +12,10 @@ interface Message {
   timestamp: Date;
   isVoice?: boolean;
   isImage?: boolean;
+  metadata?: {
+    isMeetingRelated?: boolean;
+    isLeadRelated?: boolean;
+  };
 }
 
 export default function WhatsAppAssistant() {
@@ -30,9 +34,17 @@ export default function WhatsAppAssistant() {
   const [showQuickActions, setShowQuickActions] = useState(true);
   const [showVoicePitch, setShowVoicePitch] = useState(false);
   const [isRecordingPitch, setIsRecordingPitch] = useState(false);
-  const [activeFlow, setActiveFlow] = useState<'leads' | 'meetings' | 'compare' | null>(null);
+  const [activeFlow, setActiveFlow] = useState<'leads' | 'meetings' | 'compare' | 'pitch' | null>(null);
   const [flowData, setFlowData] = useState<any>(null);
   const [loadingFlow, setLoadingFlow] = useState(false);
+  const [compareStep, setCompareStep] = useState<'select-type' | 'select-my-insurer' | 'select-competitors' | 'results'>('select-type');
+  const [selectedProductType, setSelectedProductType] = useState<string>('');
+  const [myInsurer, setMyInsurer] = useState<string>('');
+  const [selectedCompetitors, setSelectedCompetitors] = useState<string[]>([]);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [showRecordingModal, setShowRecordingModal] = useState(false);
+  const [lastStructuredSummary, setLastStructuredSummary] = useState<string | null>(null);
+  const [meetingReschedules, setMeetingReschedules] = useState<{[key: string]: {newTime: string, reason: string}}>({});
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -86,6 +98,168 @@ export default function WhatsAppAssistant() {
     }, 100);
   };
 
+  const applyStoredReschedules = (meetings: any[]) => {
+    console.log('🔄 Applying stored reschedules to meetings');
+    console.log('📦 Stored reschedules:', meetingReschedules);
+    
+    return meetings.map((meeting: any) => {
+      const meetingClientLower = meeting.client.toLowerCase();
+      
+      // First try exact match
+      if (meetingReschedules[meetingClientLower]) {
+        console.log(`✅ Exact match - Applying reschedule to ${meeting.client}: ${meetingReschedules[meetingClientLower].newTime}`);
+        return {
+          ...meeting,
+          originalTime: meeting.originalTime || meeting.time,
+          rescheduledTime: meetingReschedules[meetingClientLower].newTime,
+          rescheduleReason: meetingReschedules[meetingClientLower].reason
+        };
+      }
+      
+      // Try partial match (stored name is substring of meeting client or vice versa)
+      for (const [storedName, rescheduleInfo] of Object.entries(meetingReschedules)) {
+        if (meetingClientLower.includes(storedName) || storedName.includes(meetingClientLower)) {
+          console.log(`✅ Partial match - Applying reschedule to ${meeting.client} (matched with "${storedName}"): ${rescheduleInfo.newTime}`);
+          return {
+            ...meeting,
+            originalTime: meeting.originalTime || meeting.time,
+            rescheduledTime: rescheduleInfo.newTime,
+            rescheduleReason: rescheduleInfo.reason
+          };
+        }
+        
+        // Also try matching first 2 words (e.g., "Jonathan Koh" matches "Jonathan Koh Wei Ming")
+        const meetingWords = meetingClientLower.split(/\s+/).slice(0, 2).join(' ');
+        const storedWords = storedName.split(/\s+/).slice(0, 2).join(' ');
+        if (meetingWords === storedWords && meetingWords.length > 3) {
+          console.log(`✅ Name match (first 2 words) - Applying reschedule to ${meeting.client}: ${rescheduleInfo.newTime}`);
+          return {
+            ...meeting,
+            originalTime: meeting.originalTime || meeting.time,
+            rescheduledTime: rescheduleInfo.newTime,
+            rescheduleReason: rescheduleInfo.reason
+          };
+        }
+      }
+      
+      return meeting;
+    });
+  };
+
+  const parseAndApplyReschedules = async (aiResponse: string) => {
+    console.log('🔄 === PARSING RESCHEDULES FROM AI RESPONSE ===');
+    console.log('📄 Full AI Response (first 1000 chars):', aiResponse.substring(0, 1000));
+    
+    const reschedules: {[key: string]: {newTime: string, reason: string}} = {};
+    
+    // Split response into lines for easier parsing
+    const lines = aiResponse.split('\n');
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // Pattern 1: "Name (ID) ... Reschedule to/for TIME tomorrow"
+      // Example: "Jonathan Koh Wei Ming (LD-SG-001) - Reschedule to 11:00 AM tomorrow"
+      const pattern1 = /([\w\s]+?)\s*(?:\([^)]+\))?[:\s-]+.*?(?:Reschedule|reschedule|Move|move)\s+(?:to|for)\s+(?:tomorrow\s+at\s+)?([0-9]{1,2}:[0-9]{2}\s*(?:AM|PM|am|pm))/i;
+      let match = line.match(pattern1);
+      
+      if (match) {
+        const clientName = match[1].replace(/\([^)]+\)/g, '').replace(/[*_-]/g, '').trim();
+        const newTime = match[2].trim();
+        
+        if (clientName.length >= 3 && !clientName.match(/^(the|to|for|at|and|or)$/i)) {
+          console.log(`📅 Pattern 1 - Found reschedule: ${clientName} → ${newTime}`);
+          reschedules[clientName.toLowerCase()] = {
+            newTime: newTime,
+            reason: 'AI-recommended reschedule'
+          };
+          continue;
+        }
+      }
+      
+      // Pattern 2: "**Tomorrow (TIME):** Name" or "Name → TIME"
+      const pattern2 = /(?:\*\*Tomorrow\s*\(([0-9]{1,2}:[0-9]{2}\s*(?:AM|PM|am|pm))\)\*\*[:\s-]+([\w\s]+)|([\w\s]+)\s*→\s*([0-9]{1,2}:[0-9]{2}\s*(?:AM|PM|am|pm)))/i;
+      match = line.match(pattern2);
+      
+      if (match) {
+        let clientName: string | undefined;
+        let newTime: string | undefined;
+        if (match[1] && match[2]) {
+          // Format: **Tomorrow (TIME):** Name
+          newTime = match[1].trim();
+          clientName = match[2].replace(/\([^)]+\)/g, '').replace(/[*_-]/g, '').trim();
+        } else if (match[3] && match[4]) {
+          // Format: Name → TIME
+          clientName = match[3].replace(/\([^)]+\)/g, '').replace(/[*_-]/g, '').trim();
+          newTime = match[4].trim();
+        }
+        
+        if (clientName && newTime && clientName.length >= 3 && !clientName.match(/^(the|to|for|at|and|or)$/i)) {
+          console.log(`📅 Pattern 2 - Found reschedule: ${clientName} → ${newTime}`);
+          reschedules[clientName.toLowerCase()] = {
+            newTime: newTime,
+            reason: 'AI-recommended reschedule'
+          };
+          continue;
+        }
+      }
+      
+      // Pattern 3: "HIGH PRIORITY - Reschedule for tomorrow: Name ... TIME"
+      const pattern3 = /(?:HIGH PRIORITY|PRIORITY|CAN WAIT)[:\s-]+.*?(?:Reschedule|reschedule)[^\n]*?:\s*([\w\s]+?)(?:\s*\([^)]+\))?[:\s-]+.*?([0-9]{1,2}:[0-9]{2}\s*(?:AM|PM|am|pm))/i;
+      match = line.match(pattern3);
+      
+      if (match) {
+        const clientName = match[1].replace(/\([^)]+\)/g, '').replace(/[*_-]/g, '').trim();
+        const newTime = match[2].trim();
+        
+        if (clientName.length >= 3 && !clientName.match(/^(the|to|for|at|and|or|reschedule)$/i)) {
+          console.log(`📅 Pattern 3 - Found reschedule: ${clientName} → ${newTime}`);
+          reschedules[clientName.toLowerCase()] = {
+            newTime: newTime,
+            reason: 'AI-recommended reschedule'
+          };
+        }
+      }
+    }
+
+    if (Object.keys(reschedules).length > 0) {
+      console.log('✅ Parsed Reschedules:', reschedules);
+      console.log('📊 Total reschedules found:', Object.keys(reschedules).length);
+      
+      setMeetingReschedules(prev => {
+        const updated = { ...prev, ...reschedules };
+        console.log('💾 Updated meetingReschedules state:', updated);
+        return updated;
+      });
+      
+      // If meetings flow is currently open, update it immediately
+      if (activeFlow === 'meetings' && flowData && Array.isArray(flowData)) {
+        console.log('🔄 Meetings flow is OPEN - applying reschedules immediately');
+        const updatedMeetings = flowData.map((meeting: any) => {
+          const rescheduleKey = meeting.client.toLowerCase();
+          if (reschedules[rescheduleKey]) {
+            console.log(`✅ Updating meeting card for ${meeting.client}`);
+            return {
+              ...meeting,
+              originalTime: meeting.originalTime || meeting.time,
+              rescheduledTime: reschedules[rescheduleKey].newTime,
+              rescheduleReason: reschedules[rescheduleKey].reason
+            };
+          }
+          return meeting;
+        });
+        
+        console.log('🔄 Updated meetings data immediately:', updatedMeetings);
+        setFlowData(updatedMeetings);
+      } else {
+        console.log('ℹ️ Meetings flow is NOT currently open - reschedules stored for later');
+      }
+    } else {
+      console.log('⚠️ No reschedules found in AI response');
+      console.log('📝 Tip: AI should mention times like "11:00 AM" or "2:30 PM" with client names');
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!input.trim() || loading) return;
 
@@ -101,6 +275,10 @@ export default function WhatsAppAssistant() {
     setInput('');
     setLoading(true);
 
+    console.log('🤖 === MAIN CHAT LLM REQUEST ===');
+    console.log('📝 User Query:', userQuery);
+    console.log('📍 Location: singapore');
+
     try {
       // Convert messages to conversation history format
       const conversationHistory = messages.map(msg => ({
@@ -111,6 +289,8 @@ export default function WhatsAppAssistant() {
         timestamp: msg.timestamp
       }));
 
+      console.log('📚 Conversation History:', conversationHistory.length, 'messages');
+
       const response = await fetch('/api/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -120,6 +300,8 @@ export default function WhatsAppAssistant() {
           conversationHistory: conversationHistory,
         }),
       });
+
+      console.log('✅ Response Status:', response.status);
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -179,9 +361,25 @@ export default function WhatsAppAssistant() {
         fullResponse = 'I can help you with leads, meetings, product comparisons, and more. What would you like to know?';
       }
 
+      console.log('✅ LLM Response Complete - Length:', fullResponse.length, 'characters');
+      console.log('📨 Final Response Preview:', fullResponse.substring(0, 200) + (fullResponse.length > 200 ? '...' : ''));
+
+      // Check if response is about meetings and add quick action button
+      const isMeetingRelated = userQuery.toLowerCase().includes('meeting') || 
+                               userQuery.toLowerCase().includes('reschedule') ||
+                               userQuery.toLowerCase().includes('calendar') ||
+                               userQuery.toLowerCase().includes('appointment');
+      
+      if (isMeetingRelated) {
+        fullResponse += '\n\n---\n\n**Quick Action:** Would you like to view your meetings?';
+        
+        // Parse reschedule suggestions from AI response and update meeting data
+        await parseAndApplyReschedules(fullResponse);
+      }
+
       setMessages(prev => prev.map(msg => 
         msg.id === streamingMsgId 
-          ? { ...msg, content: fullResponse }
+          ? { ...msg, content: fullResponse, metadata: { isMeetingRelated } }
           : msg
       ));
 
@@ -200,44 +398,110 @@ export default function WhatsAppAssistant() {
   };
 
   const handleVoiceRecording = () => {
-    setIsRecording(!isRecording);
-    
     if (!isRecording) {
-      // Start recording simulation
+      // Start recording
+      console.log('🎤 === VOICE RECORDING STARTED ===');
+      setIsRecording(true);
+      setShowRecordingModal(true);
+      setRecordingDuration(0);
+      
+      // Timer for duration
+      const startTime = Date.now();
+      const timerInterval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        setRecordingDuration(elapsed);
+      }, 100);
+      
+      // Simulate 5-second recording
       setTimeout(() => {
+        clearInterval(timerInterval);
+        console.log('⏹️ Recording stopped - Processing transcription...');
         setIsRecording(false);
+        setShowRecordingModal(false);
+        setRecordingDuration(0);
+        
+        const transcribedText = `Just had a great meeting with Sarah Wong. She's 35, married with two kids aged 3 and 5. Her husband is the primary breadwinner earning about 12K per month. They're looking for comprehensive life insurance coverage around 1 million SGD. She's concerned about premium affordability but very interested. She mentioned her friend got cancer recently which is why she's thinking about this now. I need to send her a term life comparison with critical illness rider by this Friday and follow up next Tuesday.`;
+        
+        console.log('📝 Transcribed Text:', transcribedText);
+        console.log('🤖 Sending to LLM for structured summary...');
+        
         const transcribedMsg: Message = {
           id: Date.now().toString(),
           role: 'user',
-          content: '🎤 Voice message transcribed',
+          content: `🎤 **Voice Memo Recorded:**\n\n"${transcribedText}"`,
           timestamp: new Date(),
           isVoice: true
         };
+        setMessages(prev => [...prev, transcribedMsg]);
 
-        const summaryMsg: Message = {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: '📝 **Meeting Summary:**\n\n**Attendee:** Sarah Wong\n**Duration:** 25 minutes\n**Topic:** Life Insurance Review\n\n**Key Points:**\n✅ Discussed family protection needs\n✅ Two young children (ages 3 & 5)\n✅ Husband is primary breadwinner\n✅ Looking for SGD 1M coverage\n\n**Client Concerns:**\n⚠️ Premium affordability\n⚠️ Policy flexibility\n\n**Action Items:**\n📋 Send term life comparison by Friday\n📋 Include critical illness rider options\n📋 Schedule follow-up next Tuesday\n\n**Sentiment:** Highly interested, ready to proceed',
-          timestamp: new Date()
-        };
-
-        setMessages(prev => [...prev, transcribedMsg, summaryMsg]);
-      }, 3000);
+        // Auto-trigger LLM to structure the memo
+        setTimeout(() => {
+          const structureQuery = `I just recorded a voice memo from a client meeting. Please structure this into a proper meeting summary with sections for: Client Profile, Discussion Points, Client Concerns, Action Items, and Next Steps. Here's the memo:\n\n"${transcribedText}"`;
+          
+          console.log('💬 Structuring Query:', structureQuery);
+          setInput(structureQuery);
+          setTimeout(handleSendMessage, 50);
+        }, 500);
+      }, 5000); // 5 second recording
+    } else {
+      // Stop recording early
+      console.log('⏹️ Recording stopped manually');
+      setIsRecording(false);
+      setShowRecordingModal(false);
+      setRecordingDuration(0);
     }
   };
 
-  const handleOpenFlow = async (flowType: 'leads' | 'meetings' | 'compare') => {
+  const handleSaveToCRM = (summaryContent: string) => {
+    console.log('💾 === SAVING TO CRM ===');
+    console.log('📄 Summary:', summaryContent);
+    
+    const saveMsg: Message = {
+      id: Date.now().toString(),
+      role: 'assistant',
+      content: '✅ **Meeting summary saved to CRM successfully!**\n\nThe structured summary has been added to Sarah Wong\'s client record. A follow-up task has been created for Friday to send the term life comparison.\n\n**Next Actions:**\n• Email reminder set for Thursday\n• Calendar invite for Tuesday follow-up meeting\n• Lead score updated to 92 (Hot)',
+      timestamp: new Date()
+    };
+    
+    setMessages(prev => [...prev, saveMsg]);
+    setLastStructuredSummary(null);
+  };
+
+  const handleOpenFlow = async (flowType: 'leads' | 'meetings' | 'compare' | 'pitch') => {
+    console.log('📂 === OPENING FLOW ===');
+    console.log('🎯 Flow Type:', flowType);
     setLoadingFlow(true);
-    setActiveFlow(flowType);
+    
+    // Pitch flow doesn't need API call, just show the UI with delay
+    if (flowType === 'pitch') {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      setActiveFlow(flowType);
+      setFlowData({ isPitchFlow: true });
+      setLoadingFlow(false);
+      return;
+    }
+
+    // Compare flow starts with selection UI
+    if (flowType === 'compare') {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      setActiveFlow(flowType);
+      setCompareStep('select-type');
+      setSelectedProductType('');
+      setMyInsurer('');
+      setSelectedCompetitors([]);
+      setFlowData({ isCompareFlow: true });
+      setLoadingFlow(false);
+      return;
+    }
     
     let query = '';
     if (flowType === 'leads') {
       query = 'Return a JSON array of my top 5 leads in Singapore with fields: id, name, status (hot/warm/cold), interest, score, phone, lastContact. Format as valid JSON only.';
     } else if (flowType === 'meetings') {
       query = 'Return a JSON array of today\'s meetings in Singapore with fields: id, client, time, topic, status (upcoming/completed), location. Format as valid JSON only.';
-    } else if (flowType === 'compare') {
-      query = 'Return a JSON object comparing AIA, Prudential, and Manulife critical illness products with fields: provider, productName, coverage, premium, keyFeatures (array), pros (array). Format as valid JSON only.';
     }
+
+    console.log('💬 LLM Query for', flowType, ':', query);
 
     try {
       const response = await fetch('/api/agents', {
@@ -249,6 +513,8 @@ export default function WhatsAppAssistant() {
           conversationHistory: [],
         }),
       });
+
+      console.log('✅ API Response Status:', response.status);
 
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
@@ -284,29 +550,63 @@ export default function WhatsAppAssistant() {
         }
       }
 
+      console.log('📨 Full LLM Response:', fullResponse.substring(0, 500) + (fullResponse.length > 500 ? '...' : ''));
+      
       // Parse the LLM response as JSON
       try {
         const jsonMatch = fullResponse.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
         if (jsonMatch) {
-          const parsedData = JSON.parse(jsonMatch[0]);
+          let parsedData = JSON.parse(jsonMatch[0]);
+          console.log('✅ Successfully Parsed LLM data for', flowType);
+          console.log('📊 Parsed Data:', parsedData);
+          
+          // Apply any stored reschedules if this is meetings data
+          if (flowType === 'meetings' && Array.isArray(parsedData)) {
+            parsedData = applyStoredReschedules(parsedData);
+          }
+          
           setFlowData(parsedData);
         } else {
           // Fallback mock data if parsing fails
-          setFlowData(getMockFlowData(flowType));
+          console.warn('⚠️ No JSON found in response - Using mock data for', flowType);
+          let mockData = getMockFlowData(flowType);
+          console.log('🎭 Mock Data:', mockData);
+          
+          // Apply any stored reschedules if this is meetings data
+          if (flowType === 'meetings' && Array.isArray(mockData)) {
+            mockData = applyStoredReschedules(mockData);
+          }
+          
+          setFlowData(mockData);
         }
       } catch (e) {
-        console.error('Error parsing flow data:', e);
-        setFlowData(getMockFlowData(flowType));
+        console.error('❌ Error parsing flow data:', e);
+        console.log('🎭 Fallback to mock data for', flowType);
+        let mockData = getMockFlowData(flowType);
+        console.log('📦 Mock Data:', mockData);
+        
+        // Apply any stored reschedules if this is meetings data
+        if (flowType === 'meetings' && Array.isArray(mockData)) {
+          mockData = applyStoredReschedules(mockData);
+        }
+        
+        setFlowData(mockData);
       }
     } catch (error) {
       console.error('Error loading flow:', error);
-      setFlowData(getMockFlowData(flowType));
+      console.log('Using mock data due to error for', flowType);
+      const mockData = getMockFlowData(flowType);
+      console.log('Mock data:', mockData);
+      setFlowData(mockData);
     } finally {
+      // Set active flow and stop loading only after data is ready
+      setActiveFlow(flowType);
       setLoadingFlow(false);
+      console.log('Flow loaded successfully:', flowType, 'Data:', flowData);
     }
   };
 
-  const getMockFlowData = (flowType: 'leads' | 'meetings' | 'compare') => {
+  const getMockFlowData = (flowType: 'leads' | 'meetings' | 'compare' | 'pitch') => {
     if (flowType === 'leads') {
       return [
         { 
@@ -367,10 +667,12 @@ export default function WhatsAppAssistant() {
       ];
     } else if (flowType === 'meetings') {
       return [
-        { id: 'M001', client: 'Sarah Wong', time: '10:00 AM', topic: 'Life Insurance Review', status: 'upcoming', location: 'Raffles Place' },
-        { id: 'M002', client: 'Michael Lim', time: '2:00 PM', topic: 'Policy Upgrade Discussion', status: 'upcoming', location: 'Video Call' },
-        { id: 'M003', client: 'Jennifer Tan', time: '4:30 PM', topic: 'Investment Portfolio Review', status: 'upcoming', location: 'Client Office' }
+        { id: 'M001', client: 'Sarah Wong', time: '10:00 AM', topic: 'Life Insurance Review', status: 'upcoming', location: 'Raffles Place', originalTime: '10:00 AM', rescheduledTime: null },
+        { id: 'M002', client: 'Michael Lim', time: '2:00 PM', topic: 'Policy Upgrade Discussion', status: 'upcoming', location: 'Video Call', originalTime: '2:00 PM', rescheduledTime: null },
+        { id: 'M003', client: 'Jennifer Tan', time: '4:30 PM', topic: 'Investment Portfolio Review', status: 'upcoming', location: 'Client Office', originalTime: '4:30 PM', rescheduledTime: null }
       ];
+    } else if (flowType === 'pitch') {
+      return { isPitchFlow: true };
     } else {
       return {
         products: [
@@ -403,13 +705,376 @@ export default function WhatsAppAssistant() {
     }
   };
 
+  const handleProductTypeSelect = (productType: string) => {
+    setSelectedProductType(productType);
+    setCompareStep('select-my-insurer');
+  };
+
+  const handleMyInsurerSelect = (insurer: string) => {
+    setMyInsurer(insurer);
+    setCompareStep('select-competitors');
+  };
+
+  const handleCompetitorToggle = (insurer: string) => {
+    setSelectedCompetitors(prev => {
+      if (prev.includes(insurer)) {
+        return prev.filter(i => i !== insurer);
+      } else if (prev.length < 2) {
+        return [...prev, insurer];
+      }
+      return prev;
+    });
+  };
+
+  const handleCompareProducts = async () => {
+    if (selectedCompetitors.length === 0) return;
+    
+    console.log('🔍 === PRODUCT COMPARISON LLM REQUEST ===');
+    console.log('🏢 My Insurer:', myInsurer);
+    console.log('📦 Product Type:', selectedProductType);
+    console.log('🆚 Competitors:', selectedCompetitors);
+    
+    setLoadingFlow(true);
+    setCompareStep('results');
+
+    const competitors = selectedCompetitors.join(' and ');
+    const query = `I'm a ${myInsurer} agent. Compare our ${myInsurer} ${selectedProductType} product against ${competitors}'s ${selectedProductType} products. Return a JSON object with:
+    
+    {
+      "myProduct": { "provider": "${myInsurer}", "productName": "...", "coverage": "...", "premium": "...", "keyFeatures": [...], "advantages": [...] },
+      "competitors": [
+        { "provider": "...", "productName": "...", "coverage": "...", "premium": "...", "keyFeatures": [...], "weaknesses": [...] }
+      ],
+      "pitchSummary": "2-3 sentence pitch highlighting why ${myInsurer} is better",
+      "talkingPoints": ["3-4 specific competitive advantages to emphasize"],
+      "objectionHandling": ["2-3 common objections and how to counter them"]
+    }
+    
+    Format as valid JSON only with real Singapore insurance data.`;
+    
+    console.log('💬 LLM Query:', query);
+
+    try {
+      const response = await fetch('/api/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: query,
+          location: 'singapore',
+          conversationHistory: [],
+        }),
+      });
+
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let fullResponse = '';
+
+      if (reader) {
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data === '[DONE]') continue;
+
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.type === 'content' && parsed.chunk) {
+                  fullResponse += parsed.chunk;
+                }
+              } catch (e) {
+                // Skip invalid JSON
+              }
+            }
+          }
+        }
+      }
+
+      // Parse the LLM response as JSON
+      try {
+        const jsonMatch = fullResponse.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsedData = JSON.parse(jsonMatch[0]);
+          console.log('Parsed comparison data:', parsedData);
+          setFlowData(parsedData);
+        } else {
+          // Fallback mock data
+          const mockData = {
+            myProduct: {
+              provider: myInsurer,
+              productName: `${myInsurer} ${selectedProductType} Plus`,
+              coverage: 'Up to SGD 500,000',
+              premium: 'SGD 280/month',
+              keyFeatures: ['120 critical illnesses covered', 'Early stage coverage', 'Triple cancer protection', 'Premium waiver on total disability'],
+              advantages: ['Most comprehensive coverage in market', 'Competitive premium vs coverage ratio', 'Fast 48-hour claims processing', 'Free annual health screening']
+            },
+            competitors: selectedCompetitors.map(comp => ({
+              provider: comp,
+              productName: `${comp} ${selectedProductType}`,
+              coverage: 'Up to SGD 450,000',
+              premium: 'SGD 265/month',
+              keyFeatures: ['95 critical illnesses', 'Standard cancer coverage', 'Medical second opinion'],
+              weaknesses: ['25 fewer illnesses covered', 'No early stage benefit', 'Longer claims processing time', 'Higher premium for smokers']
+            })),
+            pitchSummary: `Our ${myInsurer} ${selectedProductType} offers the most comprehensive protection with 120 critical illnesses covered versus competitors' 95. For just SGD 15 more per month, you get 25% more coverage, early stage benefits they don't offer, and our industry-leading 48-hour claims guarantee.`,
+            talkingPoints: [
+              `We cover 25 MORE critical illnesses than ${selectedCompetitors.join(' or ')} - that's 25% better protection`,
+              'Unique triple cancer protection with 3x payout on recurrence',
+              'Fast-track 48-hour claims processing vs industry standard 7-14 days',
+              'Free annual health screening worth SGD 500 included'
+            ],
+            objectionHandling: [
+              `"Premium seems higher" → Actually just SGD 15/month more but you get 25% more coverage - that's SGD 0.60 per day for superior protection`,
+              `"${selectedCompetitors[0]} has good reputation" → We respect them, but our claims approval rate is 98% vs industry 92%, and we pay out faster`,
+              `"Need to think about it" → I understand. Let me email you a detailed comparison so you can see exactly what you'd be missing with other plans`
+            ]
+          };
+          setFlowData(mockData);
+        }
+      } catch (e) {
+        console.error('Error parsing comparison data:', e);
+        // Use mock data
+        const mockData = {
+          myProduct: {
+            provider: myInsurer,
+            productName: `${myInsurer} ${selectedProductType} Plus`,
+            coverage: 'Up to SGD 500,000',
+            premium: 'SGD 280/month',
+            keyFeatures: ['120 critical illnesses covered', 'Early stage coverage', 'Triple cancer protection', 'Premium waiver on total disability'],
+            advantages: ['Most comprehensive coverage in market', 'Competitive premium vs coverage ratio', 'Fast 48-hour claims processing', 'Free annual health screening']
+          },
+          competitors: selectedCompetitors.map(comp => ({
+            provider: comp,
+            productName: `${comp} ${selectedProductType}`,
+            coverage: 'Up to SGD 450,000',
+            premium: 'SGD 265/month',
+            keyFeatures: ['95 critical illnesses', 'Standard cancer coverage', 'Medical second opinion'],
+            weaknesses: ['25 fewer illnesses covered', 'No early stage benefit', 'Longer claims processing time', 'Higher premium for smokers']
+          })),
+          pitchSummary: `Our ${myInsurer} ${selectedProductType} offers the most comprehensive protection with 120 critical illnesses covered versus competitors' 95. For just SGD 15 more per month, you get 25% more coverage, early stage benefits they don't offer, and our industry-leading 48-hour claims guarantee.`,
+          talkingPoints: [
+            `We cover 25 MORE critical illnesses than ${selectedCompetitors.join(' or ')} - that's 25% better protection`,
+            'Unique triple cancer protection with 3x payout on recurrence',
+            'Fast-track 48-hour claims processing vs industry standard 7-14 days',
+            'Free annual health screening worth SGD 500 included'
+          ],
+          objectionHandling: [
+            `"Premium seems higher" → Actually just SGD 15/month more but you get 25% more coverage - that's SGD 0.60 per day for superior protection`,
+            `"${selectedCompetitors[0]} has good reputation" → We respect them, but our claims approval rate is 98% vs industry 92%, and we pay out faster`,
+            `"Need to think about it" → I understand. Let me email you a detailed comparison so you can see exactly what you'd be missing with other plans`
+          ]
+        };
+        setFlowData(mockData);
+      }
+    } catch (error) {
+      console.error('Error loading comparison:', error);
+      // Use mock data on error
+      const mockData = {
+        myProduct: {
+          provider: myInsurer,
+          productName: `${myInsurer} ${selectedProductType} Plus`,
+          coverage: 'Up to SGD 500,000',
+          premium: 'SGD 280/month',
+          keyFeatures: ['120 critical illnesses covered', 'Early stage coverage', 'Triple cancer protection', 'Premium waiver on total disability'],
+          advantages: ['Most comprehensive coverage in market', 'Competitive premium vs coverage ratio', 'Fast 48-hour claims processing', 'Free annual health screening']
+        },
+        competitors: selectedCompetitors.map(comp => ({
+          provider: comp,
+          productName: `${comp} ${selectedProductType}`,
+          coverage: 'Up to SGD 450,000',
+          premium: 'SGD 265/month',
+          keyFeatures: ['95 critical illnesses', 'Standard cancer coverage', 'Medical second opinion'],
+          weaknesses: ['25 fewer illnesses covered', 'No early stage benefit', 'Longer claims processing time', 'Higher premium for smokers']
+        })),
+        pitchSummary: `Our ${myInsurer} ${selectedProductType} offers the most comprehensive protection with 120 critical illnesses covered versus competitors' 95. For just SGD 15 more per month, you get 25% more coverage, early stage benefits they don't offer, and our industry-leading 48-hour claims guarantee.`,
+        talkingPoints: [
+          `We cover 25 MORE critical illnesses than ${selectedCompetitors.join(' or ')} - that's 25% better protection`,
+          'Unique triple cancer protection with 3x payout on recurrence',
+          'Fast-track 48-hour claims processing vs industry standard 7-14 days',
+          'Free annual health screening worth SGD 500 included'
+        ],
+        objectionHandling: [
+          `"Premium seems higher" → Actually just SGD 15/month more but you get 25% more coverage - that's SGD 0.60 per day for superior protection`,
+          `"${selectedCompetitors[0]} has good reputation" → We respect them, but our claims approval rate is 98% vs industry 92%, and we pay out faster`,
+          `"Need to think about it" → I understand. Let me email you a detailed comparison so you can see exactly what you'd be missing with other plans`
+        ]
+      };
+      setFlowData(mockData);
+    } finally {
+      setLoadingFlow(false);
+    }
+  };
+
   const handleCloseFlow = () => {
     setActiveFlow(null);
     setFlowData(null);
+    setCompareStep('select-type');
+    setSelectedProductType('');
+    setMyInsurer('');
+    setSelectedCompetitors([]);
+  };
+
+  const handleRescheduleMeeting = async (meeting: any) => {
+    console.log('📅 === RESCHEDULE MEETING TRIGGERED ===');
+    console.log('📦 Meeting Data:', meeting);
+    
+    // Add user action message
+    const actionMsg: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: `📅 Reschedule meeting with ${meeting.client}`,
+      timestamp: new Date()
+    };
+    setMessages(prev => [...prev, actionMsg]);
+
+    // Create loading message
+    const loadingMsgId = (Date.now() + 1).toString();
+    setMessages(prev => [...prev, {
+      id: loadingMsgId,
+      role: 'assistant',
+      content: '🤔 Analyzing your schedule and finding the best alternative times...',
+      timestamp: new Date()
+    }]);
+
+    try {
+      // Query AI for reschedule suggestions
+      const query = `I need to reschedule my meeting with ${meeting.client} currently scheduled for ${meeting.time} (${meeting.topic}). 
+      
+Please suggest 3 alternative time slots for this week and provide:
+1) **Recommended Time**: The single best alternative time slot
+2) **Reasoning**: Why this time is optimal
+3) **Alternative Options**: 2 other possible times
+4) **Message Template**: A professional message to send to ${meeting.client}
+
+Format your response with clear headings.`;
+
+      console.log('💬 Reschedule Query:', query);
+
+      const response = await fetch('/api/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: query,
+          location: 'singapore',
+          conversationHistory: [],
+        }),
+      });
+
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let fullResponse = '';
+
+      if (reader) {
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data === '[DONE]') continue;
+
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.type === 'content' && parsed.chunk) {
+                  fullResponse += parsed.chunk;
+                  
+                  // Update streaming message
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === loadingMsgId 
+                      ? { ...msg, content: fullResponse }
+                      : msg
+                  ));
+                }
+              } catch (e) {
+                // Skip invalid JSON
+              }
+            }
+          }
+        }
+      }
+
+      console.log('✅ AI Reschedule Response:', fullResponse);
+
+      // Extract recommended time from response
+      const timePattern = /(?:Recommended Time|Best Time)[:\s]*([0-9]{1,2}:[0-9]{2}\s*(?:AM|PM|am|pm))/i;
+      const match = fullResponse.match(timePattern);
+      const suggestedTime = match ? match[1].trim() : null;
+
+      console.log('⏰ Extracted Suggested Time:', suggestedTime);
+
+      // Update the meeting data with rescheduled time
+      if (suggestedTime && flowData && Array.isArray(flowData)) {
+        const updatedMeetings = flowData.map((m: any) => {
+          if (m.id === meeting.id) {
+            return {
+              ...m,
+              rescheduledTime: suggestedTime,
+              rescheduleReason: 'Rescheduled per AI recommendation'
+            };
+          }
+          return m;
+        });
+        
+        console.log('📊 Updated Meetings Data:', updatedMeetings);
+        setFlowData(updatedMeetings);
+
+        // Add a confirmation message
+        setTimeout(() => {
+          const confirmMsg: Message = {
+            id: Date.now().toString(),
+            role: 'assistant',
+            content: `✅ **Meeting rescheduled!** ${meeting.client}'s meeting has been moved from ${meeting.time} → ${suggestedTime}. The updated schedule is now showing in your meetings view.`,
+            timestamp: new Date()
+          };
+          setMessages(prev => [...prev, confirmMsg]);
+        }, 500);
+      }
+
+    } catch (error) {
+      console.error('❌ Error rescheduling:', error);
+      const errorMsg: Message = {
+        id: (Date.now() + 2).toString(),
+        role: 'assistant',
+        content: 'Sorry, I had trouble processing that reschedule request. Please try again.',
+        timestamp: new Date()
+      };
+      setMessages(prev => prev.map(msg => 
+        msg.id === loadingMsgId ? errorMsg : msg
+      ));
+    }
   };
 
   const handleFlowAction = async (action: string, data: any) => {
-    handleCloseFlow();
+    console.log('🎬 === FLOW ACTION TRIGGERED ===');
+    console.log('📌 Action:', action);
+    console.log('📦 Data:', data);
+    
+    // For pitch, keep the flow open and show loading
+    const isPitchAction = action.includes('pitch') || action.includes('Pitch');
+    
+    if (!isPitchAction) {
+      handleCloseFlow();
+    } else {
+      // Show loading indicator in the flow
+      setLoadingFlow(true);
+    }
     
     // Add user action message
     const actionMsg: Message = {
@@ -420,22 +1085,150 @@ export default function WhatsAppAssistant() {
     };
     setMessages(prev => [...prev, actionMsg]);
 
-    // Generate AI response based on action
+    // Generate AI response based on action with rich context
     let query = '';
-    if (action.includes('Call') || action.includes('Message')) {
-      query = `I want to contact ${data.name}. Provide a brief call/message script focusing on their interest in ${data.interest}. Include: 1) Opening line, 2) Value proposition, 3) Call to action.`;
+    if (isPitchAction) {
+      query = `Create a SHORT, WhatsApp-ready sales pitch for ${data.name} (${data.status} lead, score ${data.score}/100, interested in ${data.interest}).
+
+**Format as follows (keep it BRIEF and actionable):**
+
+**🎯 Opening**
+[1 compelling sentence hook]
+
+**💡 Key Message** 
+[2-3 sentences on why ${data.interest} matters for their situation]
+
+**✨ Product**
+${data.recommendedProduct ? `[2 sentences on ${data.recommendedProduct} benefits]` : '[Recommend best product in 2 sentences]'}
+
+**🚀 Next Step**
+[1 clear call-to-action]
+
+Keep it conversational and under 150 words total. This is for WhatsApp, so be concise and punchy.`;
+    } else if (action.includes('Call') || action.includes('Message')) {
+      query = `I want to contact ${data.name} (${data.phone || 'contact'}). They are a ${data.status} lead interested in ${data.interest}, with a lead score of ${data.score}. Last contacted ${data.lastContact}. Provide: 1) A compelling opening line, 2) Personalized value proposition based on their needs, 3) Strong call to action with urgency.`;
     } else if (action.includes('View Details')) {
-      query = `Provide detailed information about the meeting with ${data.client} at ${data.time} about ${data.topic}. Include: 1) Client background, 2) Meeting objectives, 3) Key discussion points, 4) Preparation checklist.`;
+      query = `I have a meeting with ${data.client} at ${data.time} to discuss ${data.topic} at ${data.location}. This is currently ${data.status}. Provide a comprehensive meeting briefing with:
+
+1) **Client Profile**: Background and relationship history
+2) **Meeting Objectives**: What we aim to achieve
+3) **Key Discussion Points**: Specific topics to cover
+4) **Preparation Checklist**: Documents, data, and materials needed
+5) **Talking Points**: 3-4 strategic conversation starters
+6) **Potential Objections**: And how to address them
+
+Format this as a structured meeting brief.`;
     } else if (action.includes('Reschedule')) {
-      query = `I need to reschedule the meeting with ${data.client} currently scheduled for ${data.time}. Suggest 3 alternative time slots for this week and provide a professional message template to send to the client.`;
+      query = `I need to reschedule my meeting with ${data.client} currently set for ${data.time} (${data.topic}). Provide:
+
+1) **3 Alternative Time Slots**: For this week with reasoning
+2) **Professional Message Template**: To send to ${data.client}
+3) **Rescheduling Strategy**: How to maintain rapport
+4) **Follow-up Actions**: What to do after confirmation`;
     } else if (action.includes('Get Quote')) {
-      query = `Generate a detailed insurance quote for ${data.productName} by ${data.provider}. Include: 1) Coverage summary, 2) Premium breakdown, 3) Key benefits, 4) Comparison with alternatives, 5) Next steps for purchase.`;
+      query = `Client wants a quote for **${data.productName}** by ${data.provider}.
+
+**Product Details**:
+- Coverage: ${data.coverage}
+- Premium: ${data.premium}
+- Key Features: ${data.keyFeatures?.join(', ')}
+
+Generate a comprehensive quote presentation with:
+
+1) **Coverage Summary**: What's included in clear terms
+2) **Premium Breakdown**: Monthly/annual costs and payment options
+3) **Key Benefits**: Top 5 selling points
+4) **Value Comparison**: Why this beats alternatives
+5) **Next Steps**: How to proceed with application`;
     }
 
-    setTimeout(() => {
-      setInput(query);
-      setTimeout(handleSendMessage, 50);
-    }, 300);
+    console.log('💬 Generated LLM Query:', query);
+    console.log('🚀 Triggering LLM call...');
+
+    // For pitch actions, call LLM directly and show in WhatsApp chat
+    if (isPitchAction) {
+      try {
+        const streamingMsgId = (Date.now() + 2).toString();
+        setMessages(prev => [...prev, {
+          id: streamingMsgId,
+          role: 'assistant',
+          content: '✨ Generating your personalized pitch...',
+          timestamp: new Date()
+        }]);
+
+        const response = await fetch('/api/agents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: query,
+            location: 'singapore',
+            conversationHistory: [],
+          }),
+        });
+
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        let fullResponse = '';
+
+        if (reader) {
+          let buffer = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const data = line.slice(6);
+                if (data === '[DONE]') continue;
+
+                try {
+                  const parsed = JSON.parse(data);
+                  if (parsed.type === 'content' && parsed.chunk) {
+                    fullResponse += parsed.chunk;
+                    setMessages(prev => prev.map(msg => 
+                      msg.id === streamingMsgId ? { ...msg, content: fullResponse } : msg
+                    ));
+                  }
+                } catch (e) {
+                  // Skip invalid JSON
+                }
+              }
+            }
+          }
+        }
+
+        console.log('✅ Pitch generated successfully');
+        setLoadingFlow(false);
+        
+        // Close the flow after a short delay so user can see the pitch in chat
+        setTimeout(() => {
+          handleCloseFlow();
+        }, 500);
+        
+      } catch (error) {
+        console.error('❌ Error generating pitch:', error);
+        setMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: '❌ Sorry, I had trouble generating the pitch. Please try again.',
+          timestamp: new Date()
+        }]);
+        setLoadingFlow(false);
+        handleCloseFlow();
+      }
+    } else {
+      // For other actions, use the original flow
+      setTimeout(() => {
+        setInput(query);
+        setTimeout(handleSendMessage, 50);
+      }, 300);
+    }
   };
 
   const handleAIPitchGeneration = async (pitchRequest: string) => {
@@ -530,7 +1323,7 @@ export default function WhatsAppAssistant() {
     const photoMsg: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: '📸 Product photo uploaded',
+      content: '📸 Competitor product brochure scanned',
       timestamp: new Date(),
       isImage: true
     };
@@ -538,7 +1331,7 @@ export default function WhatsAppAssistant() {
     const analysisMsg: Message = {
       id: (Date.now() + 1).toString(),
       role: 'assistant',
-      content: '🎯 **Product Comparison Analysis:**\n\n**Competitor:** AIA Critical Cover\n**Our Product:** PRUCancer 360\n\n**Coverage Comparison:**\n✅ We cover 100 illnesses vs their 95\n✅ We include early-stage coverage (they don\'t)\n✅ We offer 3x recurrence benefit (they offer 2x)\n\n**Pricing:**\n💰 Our premium: SGD 285/month\n💰 Their premium: SGD 298/month\n\n**Advantages:**\n🏆 Better coverage at lower price\n🏆 Early detection benefit unique to us\n🏆 Higher recurrence protection\n\n**Recommendation:** Emphasize early-stage coverage and recurrence benefits - these are major differentiators!',
+      content: `📊 **AI Product Comparison Analysis**\n\n**Identified Competitor Product:** AIA Critical Cover Plus\n**Recommended Response:** PRUCancer 360\n\n---\n\n### Coverage Comparison\n\n| Feature | AIA | Prudential |\n|---------|-----|------------|\n| Critical Illnesses | 95 | **120** ✅ |\n| Early Stage Coverage | ❌ | ✅ **Yes** |\n| Cancer Recurrence | 2x payout | **3x payout** ✅ |\n| Premium Waiver | Standard | **Enhanced** ✅ |\n\n---\n\n### Pricing Analysis\n\n💰 **AIA Premium:** SGD 298/month\n💰 **PRU Premium:** SGD 285/month\n\n✨ **Your Advantage:** Better coverage at **SGD 13/month less**\n\n---\n\n### Key Selling Points\n\n🎯 **Differentiators:**\n1. ✅ **25 more illnesses covered** (120 vs 95)\n2. ✅ **Early stage detection benefit** - unique to PRU\n3. ✅ **3x cancer recurrence** vs their 2x\n4. ✅ **Lower premium** - Save SGD 156/year\n5. ✅ **Enhanced premium waiver** coverage\n\n---\n\n### Suggested Pitch\n\n💬 *"I see you're looking at AIA's plan. Let me show you how our PRUCancer 360 compares - you get 25% more illnesses covered, early detection benefits they don't offer, and actually pay less per month. The cancer recurrence benefit alone is 50% better at 3x payout vs their 2x."*\n\n---\n\n⚠️ **Watch Out For:** Their agents may emphasize brand reputation - counter with our superior coverage and lower cost.\n\n✅ **Close With:** "You're getting more protection for less money - that's the smart choice."`,
       timestamp: new Date()
     };
 
@@ -560,31 +1353,51 @@ export default function WhatsAppAssistant() {
             <div className="bg-zinc-900 rounded-xl p-5 border border-zinc-800">
               <h3 className="text-sm font-bold text-gray-400 mb-4 uppercase tracking-wide">Performance Metrics</h3>
               <div className="space-y-4">
+                {/* Monthly Revenue */}
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-2xl font-bold text-white">12</div>
-                    <div className="text-xs text-gray-400">Hot Leads</div>
+                    <div className="text-2xl font-bold text-emerald-400">SGD 24.8K</div>
+                    <div className="text-xs text-gray-400">Monthly Revenue</div>
+                    <div className="text-[10px] text-emerald-500 mt-0.5">+41% with AI</div>
                   </div>
-                  <div className="h-12 w-12 rounded-full bg-red-500/10 flex items-center justify-center">
-                    <TrendingUp className="h-6 w-6 text-red-400" />
+                  <div className="h-12 w-12 rounded-full bg-emerald-500/10 flex items-center justify-center">
+                    <span className="text-2xl font-bold text-emerald-400">$</span>
                   </div>
                 </div>
+
+                {/* Lead Capacity */}
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-2xl font-bold text-white">5</div>
-                    <div className="text-xs text-gray-400">Meetings Today</div>
+                    <div className="text-2xl font-bold text-white">47 <span className="text-sm text-gray-500">vs 28</span></div>
+                    <div className="text-xs text-gray-400">Leads/Month Capacity</div>
+                    <div className="text-[10px] text-blue-500 mt-0.5">+68% vs Traditional</div>
                   </div>
-                  <div className="h-12 w-12 rounded-full bg-purple-500/10 flex items-center justify-center">
-                    <Calendar className="h-6 w-6 text-purple-400" />
+                  <div className="h-12 w-12 rounded-full bg-blue-500/10 flex items-center justify-center">
+                    <Users className="h-6 w-6 text-blue-400" />
                   </div>
                 </div>
+
+                {/* Conversion Rate */}
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-2xl font-bold text-white">89%</div>
-                    <div className="text-xs text-gray-400">Success Rate</div>
+                    <div className="text-2xl font-bold text-white">34%</div>
+                    <div className="text-xs text-gray-400">Conversion Rate</div>
+                    <div className="text-[10px] text-green-500 mt-0.5">+12% vs avg</div>
                   </div>
                   <div className="h-12 w-12 rounded-full bg-green-500/10 flex items-center justify-center">
-                    <CheckCircle className="h-6 w-6 text-green-400" />
+                    <TrendingUp className="h-6 w-6 text-green-400" />
+                  </div>
+                </div>
+
+                {/* Time Saved */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-2xl font-bold text-white">18.5h</div>
+                    <div className="text-xs text-gray-400">Hours Saved/Week</div>
+                    <div className="text-[10px] text-purple-500 mt-0.5">AI Automation</div>
+                  </div>
+                  <div className="h-12 w-12 rounded-full bg-purple-500/10 flex items-center justify-center">
+                    <CheckCircle className="h-6 w-6 text-purple-400" />
                   </div>
                 </div>
               </div>
@@ -643,7 +1456,7 @@ export default function WhatsAppAssistant() {
                             ← Back
                           </button>
                           <div className="text-xs text-gray-500">
-                            {activeFlow === 'leads' ? 'Lead List' : activeFlow === 'meetings' ? 'Meeting Schedule' : 'Product Comparison'}
+                            {activeFlow === 'leads' ? 'Lead List' : activeFlow === 'meetings' ? 'Meeting Schedule' : activeFlow === 'pitch' ? 'Pitch AI' : 'Product Comparison'}
                           </div>
                           <div className="w-12"></div>
                         </div>
@@ -656,6 +1469,63 @@ export default function WhatsAppAssistant() {
                                 <div className="animate-spin h-8 w-8 border-4 border-green-600 border-t-transparent rounded-full mx-auto mb-3"></div>
                                 <div className="text-sm text-gray-500">Loading...</div>
                               </div>
+                            </div>
+                          ) : activeFlow === 'pitch' && flowData?.isPitchFlow ? (
+                            <div className="flex flex-col items-center justify-center h-full space-y-4">
+                              <div className="text-center mb-4">
+                                <div className="h-16 w-16 rounded-full bg-gradient-to-br from-pink-500 to-purple-500 mx-auto mb-4 flex items-center justify-center">
+                                  <Sparkles className="h-8 w-8 text-white" />
+                                </div>
+                                <h3 className="text-lg font-bold text-gray-900 mb-2">Pitch AI</h3>
+                                <p className="text-xs text-gray-600 px-4">Describe your pitch, and I'll create a customer proposition</p>
+                              </div>
+                              
+                              <button
+                                onClick={() => {
+                                  setIsRecordingPitch(!isRecordingPitch);
+                                  if (!isRecordingPitch) {
+                                    setTimeout(() => {
+                                      setIsRecordingPitch(false);
+                                      handleCloseFlow();
+                                      const pitchMsg: Message = {
+                                        id: Date.now().toString(),
+                                        role: 'user',
+                                        content: '🎤 "I need to pitch a critical illness plan to a 35-year-old client with 2 kids, budget around SGD 300/month, concerned about cancer coverage"',
+                                        timestamp: new Date(),
+                                        isVoice: true
+                                      };
+                                      setMessages(prev => [...prev, pitchMsg]);
+                                      setTimeout(() => {
+                                        handleAIPitchGeneration('I need to pitch a critical illness plan to a 35-year-old client with 2 kids, budget around SGD 300/month, concerned about cancer coverage');
+                                      }, 500);
+                                    }, 3000);
+                                  }
+                                }}
+                                className={`w-full max-w-xs h-32 rounded-2xl transition-all flex flex-col items-center justify-center space-y-3 ${
+                                  isRecordingPitch
+                                    ? 'bg-red-100 border-4 border-red-500 animate-pulse'
+                                    : 'bg-pink-50 border-2 border-pink-300 hover:bg-pink-100'
+                                }`}
+                              >
+                                {isRecordingPitch ? (
+                                  <>
+                                    <div className="h-6 w-6 bg-red-500 rounded"></div>
+                                    <span className="text-red-700 font-bold text-sm">Recording...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Mic className="h-10 w-10 text-pink-600" />
+                                    <span className="text-pink-700 font-bold">Tap to Record</span>
+                                  </>
+                                )}
+                              </button>
+                              
+                              <button
+                                onClick={handleCloseFlow}
+                                className="px-6 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-semibold hover:bg-gray-200 transition-colors"
+                              >
+                                Cancel
+                              </button>
                             </div>
                           ) : activeFlow === 'leads' && Array.isArray(flowData) ? (
                             <div className="space-y-3">
@@ -718,19 +1588,31 @@ export default function WhatsAppAssistant() {
                                       <span className="text-gray-600">{lead.lastContact}</span>
                                     </div>
                                   </div>
-                                  <div className="flex gap-2">
-                                    <button 
-                                      onClick={() => handleFlowAction(`Call ${lead.name}`, lead)}
-                                      className="flex-1 px-3 py-2 bg-green-600 text-white rounded-md text-xs font-medium hover:bg-green-700 transition-colors"
-                                    >
-                                      📞 Call
-                                    </button>
-                                    <button 
-                                      onClick={() => handleFlowAction(`Message ${lead.name}`, lead)}
-                                      className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-md text-xs font-medium hover:bg-blue-700 transition-colors"
-                                    >
-                                      💬 Message
-                                    </button>
+                                  <div className="grid grid-cols-3 gap-2">
+                                    <div className="rounded-full p-0.5 bg-gradient-to-br from-green-500 to-green-600">
+                                      <button 
+                                        onClick={() => handleFlowAction(`Call ${lead.name}`, lead)}
+                                        className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-colors text-green-600 hover:bg-green-50"
+                                      >
+                                        📞 Call
+                                      </button>
+                                    </div>
+                                    <div className="rounded-full p-0.5 bg-gradient-to-br from-blue-500 to-blue-600">
+                                      <button 
+                                        onClick={() => handleFlowAction(`Message ${lead.name}`, lead)}
+                                        className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-colors text-blue-600 hover:bg-blue-50"
+                                      >
+                                        💬 Message
+                                      </button>
+                                    </div>
+                                    <div className="rounded-full p-0.5 bg-gradient-to-br from-amber-500 to-amber-600">
+                                      <button 
+                                        onClick={() => handleFlowAction(`Generate personalized pitch for ${lead.name}`, lead)}
+                                        className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-colors text-amber-600 hover:bg-amber-50"
+                                      >
+                                        ✨ Pitch
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
                               ))}
@@ -747,11 +1629,33 @@ export default function WhatsAppAssistant() {
                                 </button>
                               </div>
                               {flowData.map((meeting: any) => (
-                                <div key={meeting.id} className="bg-purple-50 rounded-lg p-4 border border-purple-200">
+                                <div key={meeting.id} className={`rounded-lg p-4 border-2 ${
+                                  meeting.rescheduledTime 
+                                    ? 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-300' 
+                                    : 'bg-purple-50 border-purple-200'
+                                }`}>
                                   <div className="flex items-start justify-between mb-2">
                                     <div className="flex-1">
                                       <div className="font-semibold text-gray-900">{meeting.client}</div>
-                                      <div className="text-sm text-purple-700 font-medium mt-1">{meeting.time}</div>
+                                      
+                                      {/* Show time comparison if rescheduled */}
+                                      {meeting.rescheduledTime ? (
+                                        <div className="mt-2 space-y-1">
+                                          <div className="flex items-center space-x-2">
+                                            <div className="text-xs text-gray-500 line-through">{meeting.originalTime}</div>
+                                            <div className="text-xs text-gray-400">→</div>
+                                            <div className="text-sm text-amber-700 font-bold">{meeting.rescheduledTime}</div>
+                                            <span className="px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full text-[9px] font-bold">RESCHEDULED</span>
+                                          </div>
+                                          {meeting.rescheduleReason && (
+                                            <div className="text-xs text-gray-600 italic">
+                                              📝 {meeting.rescheduleReason}
+                                            </div>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <div className="text-sm text-purple-700 font-medium mt-1">{meeting.time}</div>
+                                      )}
                                     </div>
                                     <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${
                                       meeting.status === 'upcoming' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
@@ -775,19 +1679,28 @@ export default function WhatsAppAssistant() {
                                       View Details
                                     </button>
                                     <button 
-                                      onClick={() => handleFlowAction(`Reschedule meeting with ${meeting.client}`, meeting)}
-                                      className="flex-1 px-3 py-2 bg-gray-600 text-white rounded-md text-xs font-medium hover:bg-gray-700 transition-colors"
+                                      onClick={() => handleRescheduleMeeting(meeting)}
+                                      className={`flex-1 px-3 py-2 rounded-md text-xs font-medium transition-colors ${
+                                        meeting.rescheduledTime
+                                          ? 'bg-amber-600 text-white hover:bg-amber-700'
+                                          : 'bg-gray-600 text-white hover:bg-gray-700'
+                                      }`}
                                     >
-                                      Reschedule
+                                      {meeting.rescheduledTime ? 'Update Again' : 'Reschedule'}
                                     </button>
                                   </div>
                                 </div>
                               ))}
                             </div>
-                          ) : activeFlow === 'compare' && flowData.products ? (
+                          ) : activeFlow === 'compare' ? (
                             <div className="space-y-4">
                               <div className="flex items-center justify-between mb-3">
-                                <div className="text-xs text-gray-500">Critical Illness Product Comparison</div>
+                                <div className="text-xs text-gray-500">
+                                  {compareStep === 'select-type' && 'Step 1: Product Type'}
+                                  {compareStep === 'select-my-insurer' && 'Step 2: Your Insurance'}
+                                  {compareStep === 'select-competitors' && `Step 3: Competitors (${selectedCompetitors.length}/1-2)`}
+                                  {compareStep === 'results' && 'Competitive Analysis'}
+                                </div>
                                 <button 
                                   onClick={handleCloseFlow}
                                   className="px-3 py-1.5 bg-green-600 text-white rounded-full text-[10px] font-bold hover:bg-green-700 transition-colors"
@@ -795,48 +1708,219 @@ export default function WhatsAppAssistant() {
                                   💬 Ask AI
                                 </button>
                               </div>
-                              {flowData.products.map((product: any, idx: number) => (
-                                <div key={idx} className="bg-orange-50 rounded-lg p-4 border-2 border-orange-200">
-                                  <div className="flex items-center justify-between mb-3">
-                                    <div>
-                                      <div className="text-xs text-orange-600 font-semibold">{product.provider}</div>
-                                      <div className="font-bold text-gray-900 text-sm">{product.productName}</div>
-                                    </div>
-                                    <div className="text-right">
-                                      <div className="text-sm font-bold text-orange-700">{product.premium}</div>
-                                      <div className="text-[10px] text-gray-600">{product.coverage}</div>
-                                    </div>
+
+                              {/* Step 1: Select Product Type */}
+                              {compareStep === 'select-type' && (
+                                <div className="space-y-2">
+                                  <div className="text-xs text-gray-600 mb-3 text-center">What type of product do you want to compare?</div>
+                                  {['Critical Illness', 'Life Insurance', 'Savings Plan', 'Investment-Linked'].map((type) => (
+                                    <button
+                                      key={type}
+                                      onClick={() => handleProductTypeSelect(type)}
+                                      className="w-full px-4 py-3 bg-gradient-to-r from-orange-50 to-orange-100 hover:from-orange-100 hover:to-orange-200 rounded-lg border-2 border-orange-200 hover:border-orange-300 transition-all"
+                                    >
+                                      <div className="text-sm font-semibold text-gray-900">{type}</div>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Step 2: Select MY Insurance Company */}
+                              {compareStep === 'select-my-insurer' && (
+                                <div className="space-y-2">
+                                  <div className="text-xs text-gray-600 mb-3 text-center">
+                                    Which insurance company do YOU represent?
                                   </div>
-                                  <div className="mb-3">
-                                    <div className="text-xs font-semibold text-gray-700 mb-1">Key Features:</div>
-                                    <div className="space-y-1">
-                                      {product.keyFeatures.map((feature: string, i: number) => (
-                                        <div key={i} className="text-xs text-gray-700 flex items-start">
-                                          <span className="text-green-600 mr-1">✓</span>
-                                          <span>{feature}</span>
+                                  {['Prudential', 'AIA', 'Manulife', 'Great Eastern', 'FWD'].map((insurer) => (
+                                    <button
+                                      key={insurer}
+                                      onClick={() => handleMyInsurerSelect(insurer)}
+                                      className="w-full px-4 py-3 bg-gradient-to-r from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 rounded-lg border-2 border-blue-200 hover:border-blue-300 transition-all"
+                                    >
+                                      <div className="text-sm font-semibold text-gray-900">{insurer}</div>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Step 3: Select Competitors */}
+                              {compareStep === 'select-competitors' && (
+                                <div className="space-y-2">
+                                  <div className="text-xs text-gray-600 mb-3 text-center">
+                                    <div className="font-semibold text-blue-700 mb-1">You: {myInsurer}</div>
+                                    <div>Select 1-2 competitors to compare against</div>
+                                  </div>
+                                  {['Prudential', 'AIA', 'Manulife', 'Great Eastern', 'FWD'].filter(i => i !== myInsurer).map((insurer) => {
+                                    const isSelected = selectedCompetitors.includes(insurer);
+                                    const isDisabled = !isSelected && selectedCompetitors.length >= 2;
+                                    return (
+                                      <button
+                                        key={insurer}
+                                        onClick={() => !isDisabled && handleCompetitorToggle(insurer)}
+                                        disabled={isDisabled}
+                                        className={`w-full px-4 py-3 rounded-lg border-2 transition-all ${
+                                          isSelected
+                                            ? 'bg-orange-500 border-orange-600 text-white font-semibold'
+                                            : isDisabled
+                                            ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed opacity-50'
+                                            : 'bg-white border-orange-200 hover:border-orange-300 text-gray-900'
+                                        }`}
+                                      >
+                                        <div className="flex items-center justify-between">
+                                          <span className="text-sm font-medium">{insurer}</span>
+                                          {isSelected && <span>✓</span>}
                                         </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                  <div className="mb-3">
-                                    <div className="text-xs font-semibold text-gray-700 mb-1">Advantages:</div>
-                                    <div className="space-y-1">
-                                      {product.pros.map((pro: string, i: number) => (
-                                        <div key={i} className="text-xs text-gray-700 flex items-start">
-                                          <span className="text-blue-600 mr-1">→</span>
-                                          <span>{pro}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                  <button 
-                                    onClick={() => handleFlowAction(`Get Quote for ${product.productName}`, product)}
-                                    className="w-full px-3 py-2 bg-orange-600 text-white rounded-md text-xs font-medium hover:bg-orange-700 transition-colors"
+                                      </button>
+                                    );
+                                  })}
+                                  <button
+                                    onClick={handleCompareProducts}
+                                    disabled={selectedCompetitors.length === 0}
+                                    className={`w-full mt-4 px-4 py-3 rounded-lg font-semibold text-sm transition-all ${
+                                      selectedCompetitors.length > 0
+                                        ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white hover:from-orange-600 hover:to-orange-700 shadow-md'
+                                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                                    }`}
                                   >
-                                    Get Quote
+                                    Compare {selectedCompetitors.length} Competitor{selectedCompetitors.length !== 1 ? 's' : ''}
                                   </button>
                                 </div>
-                              ))}
+                              )}
+
+                              {/* Step 4: Show Results */}
+                              {compareStep === 'results' && (
+                                <>
+                                  {loadingFlow ? (
+                                    <div className="text-center text-gray-500 text-sm py-8">
+                                      <div className="flex items-center justify-center mb-2">
+                                        <div className="animate-spin h-5 w-5 border-2 border-orange-600 border-t-transparent rounded-full mr-2"></div>
+                                        <span>Analyzing competitive advantages...</span>
+                                      </div>
+                                      <div className="text-xs">Please wait</div>
+                                    </div>
+                                  ) : flowData?.myProduct ? (
+                                    <div className="space-y-3">
+                                      {/* MY PRODUCT - Highlighted */}
+                                      <div className="bg-gradient-to-br from-blue-50 to-green-50 rounded-lg p-4 border-2 border-blue-400 shadow-md">
+                                        <div className="flex items-center justify-between mb-3">
+                                          <div>
+                                            <div className="text-xs text-blue-700 font-bold uppercase">✨ Your Product</div>
+                                            <div className="text-xs text-blue-600 font-semibold mt-0.5">{flowData.myProduct.provider}</div>
+                                            <div className="font-bold text-gray-900 text-sm mt-1">{flowData.myProduct.productName}</div>
+                                          </div>
+                                          <div className="text-right">
+                                            <div className="text-sm font-bold text-blue-700">{flowData.myProduct.premium}</div>
+                                            <div className="text-[10px] text-gray-600">{flowData.myProduct.coverage}</div>
+                                          </div>
+                                        </div>
+                                        <div className="mb-3">
+                                          <div className="text-xs font-semibold text-gray-700 mb-1">Key Features:</div>
+                                          <div className="space-y-1">
+                                            {flowData.myProduct.keyFeatures?.map((feature: string, i: number) => (
+                                              <div key={i} className="text-xs text-gray-800 flex items-start">
+                                                <span className="text-green-600 mr-1 font-bold">✓</span>
+                                                <span className="font-medium">{feature}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                        <div>
+                                          <div className="text-xs font-semibold text-gray-700 mb-1">Competitive Advantages:</div>
+                                          <div className="space-y-1">
+                                            {flowData.myProduct.advantages?.map((adv: string, i: number) => (
+                                              <div key={i} className="text-xs text-gray-800 flex items-start">
+                                                <span className="text-blue-600 mr-1 font-bold">★</span>
+                                                <span className="font-medium">{adv}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* COMPETITORS */}
+                                      {flowData.competitors?.map((competitor: any, idx: number) => (
+                                        <div key={idx} className="bg-gray-50 rounded-lg p-3 border border-gray-300">
+                                          <div className="flex items-center justify-between mb-2">
+                                            <div>
+                                              <div className="text-xs text-gray-500 font-semibold">Competitor</div>
+                                              <div className="font-semibold text-gray-900 text-xs">{competitor.provider}</div>
+                                              <div className="text-xs text-gray-700 mt-0.5">{competitor.productName}</div>
+                                            </div>
+                                            <div className="text-right">
+                                              <div className="text-xs font-semibold text-gray-700">{competitor.premium}</div>
+                                              <div className="text-[9px] text-gray-500">{competitor.coverage}</div>
+                                            </div>
+                                          </div>
+                                          <div className="mb-2">
+                                            <div className="text-[10px] font-semibold text-gray-600 mb-1">Features:</div>
+                                            <div className="space-y-0.5">
+                                              {competitor.keyFeatures?.slice(0, 3).map((feature: string, i: number) => (
+                                                <div key={i} className="text-[10px] text-gray-600 flex items-start">
+                                                  <span className="text-gray-400 mr-1">•</span>
+                                                  <span>{feature}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                          <div>
+                                            <div className="text-[10px] font-semibold text-red-700 mb-1">Where They Fall Short:</div>
+                                            <div className="space-y-0.5">
+                                              {competitor.weaknesses?.slice(0, 3).map((weakness: string, i: number) => (
+                                                <div key={i} className="text-[10px] text-red-600 flex items-start">
+                                                  <span className="mr-1">⚠</span>
+                                                  <span>{weakness}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ))}
+
+                                      {/* PITCH SUMMARY */}
+                                      {flowData.pitchSummary && (
+                                        <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-4 border-2 border-purple-300">
+                                          <div className="text-xs font-bold text-purple-800 mb-2 uppercase">💬 Your Pitch</div>
+                                          <div className="text-xs text-gray-800 leading-relaxed">{flowData.pitchSummary}</div>
+                                        </div>
+                                      )}
+
+                                      {/* TALKING POINTS */}
+                                      {flowData.talkingPoints && flowData.talkingPoints.length > 0 && (
+                                        <div className="bg-green-50 rounded-lg p-3 border border-green-300">
+                                          <div className="text-xs font-bold text-green-800 mb-2">🎯 Key Talking Points</div>
+                                          <div className="space-y-1.5">
+                                            {flowData.talkingPoints.map((point: string, i: number) => (
+                                              <div key={i} className="text-xs text-gray-800 flex items-start">
+                                                <span className="text-green-600 mr-1.5 font-bold">{i + 1}.</span>
+                                                <span className="font-medium">{point}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* OBJECTION HANDLING */}
+                                      {flowData.objectionHandling && flowData.objectionHandling.length > 0 && (
+                                        <div className="bg-amber-50 rounded-lg p-3 border border-amber-300">
+                                          <div className="text-xs font-bold text-amber-800 mb-2">🛡️ Handle Objections</div>
+                                          <div className="space-y-2">
+                                            {flowData.objectionHandling.map((objection: string, i: number) => (
+                                              <div key={i} className="text-xs text-gray-800">
+                                                <div className="font-semibold">{objection.split(' → ')[0]}</div>
+                                                <div className="text-gray-700 mt-0.5 ml-3">→ {objection.split(' → ')[1]}</div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="text-center text-gray-500 text-sm py-4">
+                                      <div className="mb-2">No comparison data available</div>
+                                    </div>
+                                  )}
+                                </>
+                              )}
                             </div>
                           ) : (
                             <div className="text-center text-gray-500 text-sm">No data available</div>
@@ -846,6 +1930,16 @@ export default function WhatsAppAssistant() {
                     ) : (
                       // Regular Chat View
                       <div className="p-4 space-y-3">
+                    {loading && (
+                      <div className="flex justify-start mb-3">
+                        <div className="bg-white rounded-xl px-4 py-3 shadow-sm">
+                          <div className="flex items-center space-x-2">
+                            <div className="animate-spin h-4 w-4 border-2 border-green-600 border-t-transparent rounded-full"></div>
+                            <div className="text-sm text-gray-600">AI is thinking...</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {messages.map((message) => (
                       <div
                         key={message.id}
@@ -886,6 +1980,51 @@ export default function WhatsAppAssistant() {
                           }`}>
                             {message.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
                           </div>
+                          
+                          {/* Action buttons for structured summaries */}
+                          {message.role === 'assistant' && 
+                           (message.content.includes('**Client Profile**') || 
+                            message.content.includes('**Meeting Summary**') ||
+                            message.content.includes('**Discussion Points**') ||
+                            message.content.includes('**Action Items**')) && (
+                            <div className="flex gap-2 mt-3 pt-3 border-t border-gray-200">
+                              <button
+                                onClick={() => handleSaveToCRM(message.content)}
+                                className="flex-1 px-3 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg text-xs font-semibold hover:from-blue-600 hover:to-blue-700 transition-all shadow-sm"
+                              >
+                                💾 Save to CRM
+                              </button>
+                              <button
+                                onClick={() => {
+                                  // Copy to clipboard
+                                  navigator.clipboard.writeText(message.content);
+                                  const copyMsg: Message = {
+                                    id: Date.now().toString(),
+                                    role: 'assistant',
+                                    content: '📋 Summary copied to clipboard!',
+                                    timestamp: new Date()
+                                  };
+                                  setMessages(prev => [...prev, copyMsg]);
+                                }}
+                                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-xs font-semibold hover:bg-gray-200 transition-colors"
+                              >
+                                📋 Copy
+                              </button>
+                            </div>
+                          )}
+                          
+                          {/* Quick action button for meeting-related responses */}
+                          {message.role === 'assistant' && message.metadata?.isMeetingRelated && (
+                            <div className="mt-3 pt-3 border-t border-gray-200">
+                              <button
+                                onClick={() => handleOpenFlow('meetings')}
+                                className="w-full px-3 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg text-xs font-semibold hover:from-purple-600 hover:to-purple-700 transition-all shadow-sm flex items-center justify-center space-x-2"
+                              >
+                                <Calendar className="h-3.5 w-3.5" />
+                                <span>📅 Open Meetings</span>
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -926,20 +2065,36 @@ export default function WhatsAppAssistant() {
                   {!activeFlow && (
                   <>
                   <div className="bg-white border-t border-gray-200 px-3 py-2">
+                    {/* Loading indicator for flows */}
+                    {loadingFlow && (
+                      <div className="mb-2 bg-gradient-to-r from-green-500/10 via-green-500/20 to-green-500/10 rounded-full p-0.5">
+                        <div className="bg-white rounded-full px-4 py-2 flex items-center justify-center space-x-2">
+                          <div className="relative">
+                            <div className="h-3 w-3 rounded-full bg-green-500 animate-ping absolute"></div>
+                            <div className="h-3 w-3 rounded-full bg-green-600"></div>
+                          </div>
+                          <span className="text-xs text-gray-700 font-medium">Loading data...</span>
+                        </div>
+                      </div>
+                    )}
                     <div className="grid grid-cols-3 gap-1.5 mb-2">
                       <button
                         onClick={() => handleOpenFlow('leads')}
-                        className="px-2 py-2 bg-red-50 text-red-700 rounded-lg text-[9px] font-semibold hover:bg-red-100 transition-colors"
+                        className={`px-2 py-2 rounded-lg text-[9px] font-semibold transition-colors ${
+                          loadingFlow ? 'bg-red-100 text-red-400 cursor-not-allowed opacity-50' : 'bg-red-50 text-red-700 hover:bg-red-100'
+                        }`}
                         disabled={loading || loadingFlow}
                       >
-                        🔥 Leads
+                        {loadingFlow ? '⏳' : '🔥'} Leads
                       </button>
                       <button
                         onClick={() => handleOpenFlow('meetings')}
-                        className="px-2 py-2 bg-purple-50 text-purple-700 rounded-lg text-[9px] font-semibold hover:bg-purple-100 transition-colors"
+                        className={`px-2 py-2 rounded-lg text-[9px] font-semibold transition-colors ${
+                          loadingFlow ? 'bg-purple-100 text-purple-400 cursor-not-allowed opacity-50' : 'bg-purple-50 text-purple-700 hover:bg-purple-100'
+                        }`}
                         disabled={loading || loadingFlow}
                       >
-                        📅 Meetings
+                        {loadingFlow ? '⏳' : '📅'} Meetings
                       </button>
                       <button
                         onClick={handleVoiceRecording}
@@ -954,10 +2109,12 @@ export default function WhatsAppAssistant() {
                       </button>
                       <button
                         onClick={() => handleOpenFlow('compare')}
-                        className="px-2 py-2 bg-orange-50 text-orange-700 rounded-lg text-[9px] font-semibold hover:bg-orange-100 transition-colors"
+                        className={`px-2 py-2 rounded-lg text-[9px] font-semibold transition-colors ${
+                          loadingFlow ? 'bg-orange-100 text-orange-400 cursor-not-allowed opacity-50' : 'bg-orange-50 text-orange-700 hover:bg-orange-100'
+                        }`}
                         disabled={loading || loadingFlow}
                       >
-                        🎯 Compare
+                        {loadingFlow ? '⏳' : '🎯'} Compare
                       </button>
                       <button
                         onClick={handlePhotoUpload}
@@ -967,13 +2124,13 @@ export default function WhatsAppAssistant() {
                         📸 Scan
                       </button>
                       <button
-                        onClick={() => {
-                          setShowVoicePitch(true);
-                        }}
-                        className="px-2 py-2 bg-pink-50 text-pink-700 rounded-lg text-[9px] font-semibold hover:bg-pink-100 transition-colors"
-                        disabled={loading}
+                        onClick={() => handleOpenFlow('pitch')}
+                        className={`px-2 py-2 rounded-lg text-[9px] font-semibold transition-colors ${
+                          loadingFlow ? 'bg-pink-100 text-pink-400 cursor-not-allowed opacity-50' : 'bg-pink-50 text-pink-700 hover:bg-pink-100'
+                        }`}
+                        disabled={loading || loadingFlow}
                       >
-                        💡 Pitch AI
+                        {loadingFlow ? '⏳' : '💡'} Pitch AI
                       </button>
                     </div>
 
@@ -1079,8 +2236,8 @@ export default function WhatsAppAssistant() {
         </div>
       </div>
 
-      {/* Pitch AI Modal */}
-      {showVoicePitch && (
+      {/* Pitch AI Modal - Now integrated inside phone, keeping for backwards compatibility */}
+      {false && showVoicePitch && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
             <div className="text-center mb-6">
@@ -1142,6 +2299,61 @@ export default function WhatsAppAssistant() {
                 Cancel
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Recording Modal Overlay */}
+      {showRecordingModal && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center backdrop-blur-sm">
+          <div className="bg-white rounded-3xl p-10 shadow-2xl max-w-md w-full mx-4 text-center">
+            {/* Animated Recording Icon */}
+            <div className="mb-6 flex justify-center">
+              <div className="relative">
+                {/* Pulsing outer rings */}
+                <div className="absolute inset-0 bg-red-500 rounded-full animate-ping opacity-75"></div>
+                <div className="absolute inset-0 bg-red-500 rounded-full animate-pulse opacity-50" style={{ animationDelay: '0.3s' }}></div>
+                
+                {/* Main mic icon */}
+                <div className="relative bg-gradient-to-br from-red-500 to-red-600 rounded-full p-8">
+                  <Mic className="h-16 w-16 text-white" />
+                </div>
+              </div>
+            </div>
+            
+            {/* Status Text */}
+            <div className="mb-4">
+              <div className="text-2xl font-bold text-gray-900 mb-2">Recording...</div>
+              <div className="text-lg text-gray-600 font-mono">{recordingDuration.toFixed(1)}s</div>
+            </div>
+            
+            {/* Waveform Animation */}
+            <div className="flex items-center justify-center space-x-1 mb-6 h-12">
+              {[...Array(20)].map((_, i) => (
+                <div
+                  key={i}
+                  className="w-1 bg-red-500 rounded-full transition-all"
+                  style={{
+                    height: `${Math.random() * 100}%`,
+                    animation: `pulse 0.${5 + Math.random() * 5}s ease-in-out infinite`,
+                    animationDelay: `${i * 0.05}s`
+                  }}
+                />
+              ))}
+            </div>
+            
+            {/* Info Text */}
+            <div className="text-sm text-gray-500 mb-6">
+              Speak clearly about your client meeting...
+            </div>
+            
+            {/* Stop Button */}
+            <button
+              onClick={handleVoiceRecording}
+              className="px-8 py-3 bg-gray-800 text-white rounded-full font-semibold hover:bg-gray-900 transition-colors"
+            >
+              ⏹️ Stop Recording
+            </button>
           </div>
         </div>
       )}

@@ -24,18 +24,24 @@ Context:
 
 User Query: "${userQuery}"
 
-Analyze this query and determine:
-1. Which specialized agent should handle it? (recruitment, leads, sell, performance)
-2. Does it require multiple agents working together?
-3. What's your confidence level?
+You must route this query to ONE of these agents. The selectedAgent field must ONLY contain one of these exact values:
+- "recruitment" - for hiring, candidates, interviews, onboarding, agent screening
+- "leads" - for lead generation, qualification, nurturing, lead scoring
+- "sell" - for sales, products, customers, cross-sell, coverage analysis
+- "performance" - for agent performance, coaching, commissions, targets, forecasting
+- "orchestrator" - for meetings, scheduling, general questions, multi-topic queries, or anything that doesn't fit above categories
 
-Respond in JSON format:
+IMPORTANT: 
+- The selectedAgent value must be EXACTLY one of the 5 options above (no variations, no "none", no descriptions)
+- For meeting/scheduling/calendar requests, ALWAYS use "orchestrator"
+- For general queries or multi-topic questions, ALWAYS use "orchestrator"
+
+Respond ONLY with valid JSON (no additional text):
 {
-  "selectedAgent": "agent_id",
-  "reasoning": "explanation",
+  "selectedAgent": "one_of_the_five_options_above",
+  "reasoning": "brief explanation",
   "confidence": 0.95,
-  "requiresMultipleAgents": false,
-  "agentSequence": ["agent1", "agent2"]
+  "requiresMultipleAgents": false
 }`;
 
     try {
@@ -52,17 +58,48 @@ Respond in JSON format:
         1024
       );
 
-      // Parse JSON response
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      console.log('🔍 Raw Routing Response:', response.substring(0, 500));
+
+      // Parse JSON response - extract ONLY the JSON, ignore any surrounding text
+      const jsonMatch = response.match(/\{[\s\S]*?\}/);
       if (jsonMatch) {
-        const decision = JSON.parse(jsonMatch[0]);
-        return decision as OrchestratorDecision;
+        try {
+          const decision = JSON.parse(jsonMatch[0]) as OrchestratorDecision;
+          
+          console.log('📋 Parsed Routing Decision:', decision);
+          
+          // Safety check: if selectedAgent is invalid, default to orchestrator
+          const validAgentIds = ['recruitment', 'leads', 'sell', 'performance', 'orchestrator'];
+          
+          // Clean up the selectedAgent field - extract just the agent ID
+          let cleanedAgentId = decision.selectedAgent?.trim().toLowerCase() || '';
+          
+          // Remove any extra text like "none - requires clarification"
+          if (cleanedAgentId.includes('none') || cleanedAgentId.includes('-') || cleanedAgentId.includes(' ')) {
+            console.warn(`Cleaning invalid agent ID: "${cleanedAgentId}"`);
+            cleanedAgentId = 'orchestrator';
+          }
+          
+          // Validate it's one of the allowed IDs
+          if (!validAgentIds.includes(cleanedAgentId)) {
+            console.warn(`Invalid agent ID "${cleanedAgentId}" returned by routing. Defaulting to orchestrator.`);
+            cleanedAgentId = 'orchestrator';
+          }
+          
+          decision.selectedAgent = cleanedAgentId;
+          console.log('✅ Final Selected Agent:', decision.selectedAgent);
+          
+          return decision;
+        } catch (parseError) {
+          console.error('❌ JSON Parse Error:', parseError);
+          throw parseError;
+        }
       }
 
       // Default fallback
       return {
-        selectedAgent: 'recruitment',
-        reasoning: 'Defaulting to recruitment agent',
+        selectedAgent: 'orchestrator',
+        reasoning: 'No JSON response from routing - defaulting to orchestrator for general handling',
         confidence: 0.5,
         requiresMultipleAgents: false
       };
@@ -101,11 +138,22 @@ Respond in JSON format:
     if (onChunk) {
       // Streaming response
       let fullResponse = '';
+      let isCleaningApplied = false;
+      
       await this.llmApi.streamCompletion(
         messages,
         agent.systemPrompt,
         (chunk) => {
           fullResponse += chunk;
+          
+          // Clean routing JSON from streamed content
+          const cleaned = this.cleanAgentResponse(fullResponse);
+          if (cleaned !== fullResponse && !isCleaningApplied) {
+            // Only log once when cleaning is applied
+            console.log('🧹 Cleaned routing JSON from agent response');
+            isCleaningApplied = true;
+          }
+          
           onChunk(chunk);
         },
         4096
@@ -113,12 +161,30 @@ Respond in JSON format:
       return fullResponse;
     } else {
       // Non-streaming response
-      return await this.llmApi.analyzeDocument(
+      const response = await this.llmApi.analyzeDocument(
         contextPrompt,
         userQuery,
         4096
       );
+      return this.cleanAgentResponse(response);
     }
+  }
+
+  /**
+   * Clean agent response to remove any routing metadata that shouldn't be shown to users
+   */
+  private cleanAgentResponse(response: string): string {
+    // Remove any JSON objects that look like routing decisions
+    const routingJsonPattern = /\{\s*"selectedAgent"\s*:\s*"[^"]*"[\s\S]*?\}/g;
+    let cleaned = response.replace(routingJsonPattern, '');
+    
+    // Remove "Quick Action:" text if routing JSON was removed
+    cleaned = cleaned.replace(/Quick Action:.*$/m, '').trim();
+    
+    // Remove any leftover multiple empty lines
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+    
+    return cleaned.trim();
   }
 
   /**

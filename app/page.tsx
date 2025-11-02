@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import DashboardLayout from '@/components/dashboard-layout';
 import { Users, TrendingUp, ShoppingCart, BarChart3, ArrowUpRight, ArrowDownRight, Info, Target, Calendar, Zap, CheckCircle, Clock, AlertCircle } from 'lucide-react';
 
@@ -38,6 +39,16 @@ export default function Home() {
 
   // AI Impact Metrics
   const aiImpact = [
+    {
+      id: 'revenue',
+      value: 'SGD 2.4M',
+      secondaryValue: 'vs 1.7M',
+      label: 'Revenue (AI)',
+      sublabel: '',
+      color: 'emerald',
+      reasoning: 'AI-driven improvements increased monthly revenue by 41% compared to pre-AI baseline (SGD 1.7M → SGD 2.4M). Enhanced lead qualification, optimal meeting scheduling, and cross-sell recommendations drive higher conversion.',
+      trend: '+41%'
+    },
     {
       id: 'leads',
       value: 847,
@@ -120,7 +131,8 @@ export default function Home() {
         candidate: 'Michael Chen',
         reason: 'Success probability below 60% threshold',
         risk: 'High attrition risk in first year',
-        action: 'Review experience match and cultural fit'
+        action: 'Review experience match and cultural fit',
+        actionType: 'assessment'
       }
     },
     { 
@@ -133,7 +145,8 @@ export default function Home() {
         candidate: 'Sarah Wong',
         reason: 'Key skill gaps detected',
         risk: 'Missing critical product knowledge',
-        action: 'Assess training potential and timeline'
+        action: 'Assess training potential and timeline',
+        actionType: 'assessment'
       }
     },
     { 
@@ -146,7 +159,8 @@ export default function Home() {
         lead: 'David Tan',
         reason: 'Conflicting information across platforms',
         risk: 'Possible fraud indicator',
-        action: 'Manual verification of identity and financials'
+        action: 'Manual verification of identity and financials',
+        actionType: 'fraud-check'
       }
     },
     { 
@@ -159,7 +173,8 @@ export default function Home() {
         client: 'Premium Client - Emma Lee',
         reason: 'SGD 250K opportunity detected',
         risk: 'Requires senior agent approval',
-        action: 'Review personalized proposal and pricing'
+        action: 'Review personalized proposal and pricing',
+        actionType: 'approval'
       }
     },
   ];
@@ -246,27 +261,58 @@ export default function Home() {
               Monitor and manage your insurance agency operations
             </p>
           </div>
-              <div className="flex space-x-2">
-                <button
-                  onClick={() => setSelectedLocation('singapore')}
-                  className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
-                    selectedLocation === 'singapore'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-card text-muted-foreground hover:text-foreground border border-border'
-                  }`}
-                >
-                  Singapore
-                </button>
-                <button
-                  onClick={() => setSelectedLocation('hongkong')}
-                  className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
-                    selectedLocation === 'hongkong'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-card text-muted-foreground hover:text-foreground border border-border'
-                  }`}
-                >
-                  Hong Kong
-                </button>
+              <div className="flex items-center space-x-3">
+                {/* Singapore Flag Circle */}
+                <div className="flex flex-col items-center space-y-1">
+                  <button
+                    onClick={() => setSelectedLocation('singapore')}
+                    className={`flex-shrink-0 w-8 h-8 rounded-full overflow-hidden transition-all border-0 outline-none p-0 ${
+                      selectedLocation === 'singapore'
+                        ? 'opacity-100'
+                        : 'opacity-60 hover:opacity-100'
+                    }`}
+                    style={{ background: 'transparent' }}
+                    title="Singapore"
+                  >
+                    <Image
+                      src="/sg.png"
+                      alt="Singapore"
+                      width={32}
+                      height={32}
+                      className="w-full h-full object-cover"
+                      style={{ display: 'block' }}
+                    />
+                  </button>
+                  <div className={`h-0.5 w-6 rounded-full transition-all ${
+                    selectedLocation === 'singapore' ? 'bg-blue-500' : 'bg-transparent'
+                  }`} />
+                </div>
+                
+                {/* Hong Kong Flag Circle */}
+                <div className="flex flex-col items-center space-y-1">
+                  <button
+                    onClick={() => setSelectedLocation('hongkong')}
+                    className={`flex-shrink-0 w-8 h-8 rounded-full overflow-hidden transition-all border-0 outline-none p-0 ${
+                      selectedLocation === 'hongkong'
+                        ? 'opacity-100'
+                        : 'opacity-60 hover:opacity-100'
+                    }`}
+                    style={{ background: 'transparent' }}
+                    title="Hong Kong"
+                  >
+                    <Image
+                      src="/hk.png"
+                      alt="Hong Kong"
+                      width={32}
+                      height={32}
+                      className="w-full h-full object-cover"
+                      style={{ display: 'block' }}
+                    />
+                  </button>
+                  <div className={`h-0.5 w-6 rounded-full transition-all ${
+                    selectedLocation === 'hongkong' ? 'bg-blue-500' : 'bg-transparent'
+                  }`} />
+                </div>
               </div>
         </div>
 
@@ -287,9 +333,10 @@ export default function Home() {
                 </div>
               </div>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
               {aiImpact.map((metric) => {
                 const colorMap: any = {
+                  emerald: 'text-emerald-500 border-emerald-500 bg-black',
                   purple: 'text-purple-500 border-purple-500 bg-black',
                   pink: 'text-pink-500 border-pink-500 bg-black',
                   green: 'text-green-500 border-green-500 bg-black',
@@ -310,6 +357,7 @@ export default function Home() {
                         <div className={`text-xl font-bold ${colorMap[metric.color].split(' ')[0]}`}>{metric.value}</div>
                         <div className="text-left">
                           <div className="text-xs font-medium leading-tight">{metric.label}</div>
+                          {metric.sublabel && <div className="text-[9px] opacity-50">{metric.sublabel}</div>}
                           <div className="text-xs opacity-60">{metric.trend}</div>
                         </div>
                       </div>
@@ -381,6 +429,98 @@ export default function Home() {
               </Link>
             );
           })}
+        </div>
+
+        {/* Live AI Activity Feed */}
+        <div className="bg-card border border-border rounded-xl p-6">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground mb-1">Live AI Activity Feed</h2>
+              <p className="text-sm text-muted-foreground">Real-time operational tasks completed by AI agents</p>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2 px-3 py-1.5 bg-black border-2 border-green-500 rounded-full">
+                <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse"></div>
+                <span className="text-xs font-bold text-green-500">Live</span>
+              </div>
+              <div className="px-3 py-1.5 bg-black border-2 border-blue-500 rounded-full">
+                <span className="text-xs font-bold text-blue-500">{automationRate}% Automated</span>
+              </div>
+            </div>
+          </div>
+          
+          <div className="space-y-3 max-h-96 overflow-y-auto">
+            {activities.map((activity, index) => {
+              const Icon = activity.icon;
+              const isNew = index === 0;
+              const timeAgo = Math.floor((Date.now() - new Date(activity.timestamp).getTime()) / 1000);
+              const timeDisplay = timeAgo < 60 ? `${timeAgo}s ago` : `${Math.floor(timeAgo / 60)}m ago`;
+              
+              return (
+                <div 
+                  key={activity.id} 
+                  onClick={() => activity.type === 'review' && activity.reviewDetails && setSelectedReview(activity)}
+                  className={`flex items-start space-x-3 p-3 rounded-lg border transition-all ${
+                    isNew 
+                      ? 'border-primary bg-primary/5 animate-in fade-in slide-in-from-top-2 duration-500' 
+                      : 'border-border bg-background'
+                  } ${activity.type === 'review' ? 'border-amber-500/50 bg-amber-500/5 cursor-pointer hover:border-amber-500 hover:bg-amber-500/10' : ''}`}
+                >
+                  <div className={`mt-0.5 ${activity.color}`}>
+                    <Icon className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center space-x-2 mb-1">
+                      <span className="text-sm font-semibold text-foreground">{activity.agent}</span>
+                      {activity.type === 'review' && (
+                        <span className="px-3 py-1 bg-black border-2 border-amber-500 rounded-full text-xs font-bold text-amber-500">
+                          Human Review · Click to review
+                        </span>
+                      )}
+                      {activity.type === 'automated' && (
+                        <span className="px-3 py-1 bg-black border-2 border-green-500 rounded-full text-xs font-bold text-green-500">
+                          Automated
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-muted-foreground mb-2">{activity.task}</p>
+                    
+                    {/* Review Details Preview */}
+                    {activity.type === 'review' && activity.reviewDetails && (
+                      <div className="mt-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs font-semibold text-foreground">
+                            Subject: {activity.reviewDetails.candidate || activity.reviewDetails.lead || activity.reviewDetails.client}
+                          </div>
+                          <button className="text-xs font-bold text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 underline">
+                            View Full Details →
+                          </button>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          <span className="font-medium text-foreground">Reason:</span> {activity.reviewDetails.reason}
+                        </div>
+                        <div className="text-xs">
+                          <span className="font-medium text-amber-600 dark:text-amber-400">Risk:</span> {activity.reviewDetails.risk}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Clock className="h-3 w-3 text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">{timeDisplay}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          
+          <div className="mt-4 pt-4 border-t border-border flex items-center justify-between">
+            <div className="text-sm text-muted-foreground">
+              <span className="font-semibold text-foreground">{activities.filter(a => a.type === 'automated').length}</span> tasks automated, {' '}
+              <span className="font-semibold text-amber-600 dark:text-amber-400">{activities.filter(a => a.type === 'review').length}</span> pending human review
+            </div>
+            <button className="text-sm text-primary hover:text-primary/80 font-medium">View All →</button>
+          </div>
         </div>
 
         {/* Performance Trends with Gradient Charts */}
@@ -543,22 +683,22 @@ export default function Home() {
             <div className="mt-6 space-y-3">
               <div className="text-sm font-semibold text-foreground mb-2">AI Recommendations</div>
               
-              <div className="p-3 bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-950 dark:to-purple-950 rounded-lg border border-blue-200 dark:border-blue-800">
-                <div className="text-xs font-semibold text-blue-900 dark:text-blue-100 mb-1">🎯 Coaching Priority</div>
+              <div className="p-3 bg-blue-500/10 dark:bg-blue-500/10 rounded-lg border border-blue-500/20 dark:border-blue-500/20">
+                <div className="text-xs font-semibold text-blue-900 dark:text-blue-100 mb-1">Coaching Priority</div>
                 <div className="text-xs text-blue-700 dark:text-blue-300">
                   Schedule intensive coaching for 20% underperforming agents. Projected improvement: +15% in 30 days.
                 </div>
               </div>
 
-              <div className="p-3 bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950 dark:to-emerald-950 rounded-lg border border-green-200 dark:border-green-800">
-                <div className="text-xs font-semibold text-green-900 dark:text-green-100 mb-1">⭐ Top Performer Rewards</div>
+              <div className="p-3 bg-green-500/10 dark:bg-green-500/10 rounded-lg border border-green-500/20 dark:border-green-500/20">
+                <div className="text-xs font-semibold text-green-900 dark:text-green-100 mb-1">Top Performer Rewards</div>
                 <div className="text-xs text-green-700 dark:text-green-300">
                   32% top performers should mentor struggling agents. Consider bonus incentives to maintain momentum.
                 </div>
               </div>
 
-              <div className="p-3 bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950 dark:to-orange-950 rounded-lg border border-amber-200 dark:border-amber-800">
-                <div className="text-xs font-semibold text-amber-900 dark:text-amber-100 mb-1">📚 Skills Gap Analysis</div>
+              <div className="p-3 bg-amber-500/10 dark:bg-amber-500/10 rounded-lg border border-amber-500/20 dark:border-amber-500/20">
+                <div className="text-xs font-semibold text-amber-900 dark:text-amber-100 mb-1">Skills Gap Analysis</div>
                 <div className="text-xs text-amber-700 dark:text-amber-300">
                   Middle tier (48%) needs advanced sales training. Focus on objection handling and closing techniques.
                 </div>
@@ -633,98 +773,6 @@ export default function Home() {
             </div>
           </div>
         </div>
-
-        {/* Live AI Activity Feed */}
-        <div className="bg-card border border-border rounded-xl p-6">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h2 className="text-lg font-semibold text-foreground mb-1">Live AI Activity Feed</h2>
-              <p className="text-sm text-muted-foreground">Real-time operational tasks completed by AI agents</p>
-            </div>
-            <div className="flex items-center space-x-2">
-              <div className="flex items-center space-x-2 px-3 py-1.5 bg-black border-2 border-green-500 rounded-full">
-                <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse"></div>
-                <span className="text-xs font-bold text-green-500">Live</span>
-              </div>
-              <div className="px-3 py-1.5 bg-black border-2 border-blue-500 rounded-full">
-                <span className="text-xs font-bold text-blue-500">{automationRate}% Automated</span>
-              </div>
-            </div>
-          </div>
-          
-          <div className="space-y-3 max-h-96 overflow-y-auto">
-            {activities.map((activity, index) => {
-              const Icon = activity.icon;
-              const isNew = index === 0;
-              const timeAgo = Math.floor((Date.now() - new Date(activity.timestamp).getTime()) / 1000);
-              const timeDisplay = timeAgo < 60 ? `${timeAgo}s ago` : `${Math.floor(timeAgo / 60)}m ago`;
-              
-              return (
-                <div 
-                  key={activity.id} 
-                  onClick={() => activity.type === 'review' && activity.reviewDetails && setSelectedReview(activity)}
-                  className={`flex items-start space-x-3 p-3 rounded-lg border transition-all ${
-                    isNew 
-                      ? 'border-primary bg-primary/5 animate-in fade-in slide-in-from-top-2 duration-500' 
-                      : 'border-border bg-background'
-                  } ${activity.type === 'review' ? 'border-amber-500/50 bg-amber-500/5 cursor-pointer hover:border-amber-500 hover:bg-amber-500/10' : ''}`}
-                >
-                  <div className={`mt-0.5 ${activity.color}`}>
-                    <Icon className="h-5 w-5" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center space-x-2 mb-1">
-                      <span className="text-sm font-semibold text-foreground">{activity.agent}</span>
-                      {activity.type === 'review' && (
-                        <span className="px-3 py-1 bg-black border-2 border-amber-500 rounded-full text-xs font-bold text-amber-500">
-                          Human Review · Click to review
-                        </span>
-                      )}
-                      {activity.type === 'automated' && (
-                        <span className="px-3 py-1 bg-black border-2 border-green-500 rounded-full text-xs font-bold text-green-500">
-                          Automated
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-muted-foreground mb-2">{activity.task}</p>
-                    
-                    {/* Review Details Preview */}
-                    {activity.type === 'review' && activity.reviewDetails && (
-                      <div className="mt-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <div className="text-xs font-semibold text-foreground">
-                            Subject: {activity.reviewDetails.candidate || activity.reviewDetails.lead || activity.reviewDetails.client}
-                          </div>
-                          <button className="text-xs font-bold text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 underline">
-                            View Full Details →
-                          </button>
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          <span className="font-medium text-foreground">Reason:</span> {activity.reviewDetails.reason}
-                        </div>
-                        <div className="text-xs">
-                          <span className="font-medium text-amber-600 dark:text-amber-400">Risk:</span> {activity.reviewDetails.risk}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Clock className="h-3 w-3 text-muted-foreground" />
-                    <span className="text-xs text-muted-foreground whitespace-nowrap">{timeDisplay}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          
-          <div className="mt-4 pt-4 border-t border-border flex items-center justify-between">
-            <div className="text-sm text-muted-foreground">
-              <span className="font-semibold text-foreground">{activities.filter(a => a.type === 'automated').length}</span> tasks automated, {' '}
-              <span className="font-semibold text-amber-600 dark:text-amber-400">{activities.filter(a => a.type === 'review').length}</span> pending human review
-            </div>
-            <button className="text-sm text-primary hover:text-primary/80 font-medium">View All →</button>
-          </div>
-        </div>
       </div>
 
       {/* Review Modal */}
@@ -780,24 +828,75 @@ export default function Home() {
             </div>
             
             <div className="flex space-x-3 mt-6">
-              <button 
-                onClick={() => setSelectedReview(null)}
-                className="flex-1 px-6 py-2.5 bg-black border-2 border-green-500 text-green-500 rounded-full font-bold hover:bg-green-500 hover:text-black transition-all"
-              >
-                ✓ Approve
-              </button>
-              <button 
-                onClick={() => setSelectedReview(null)}
-                className="flex-1 px-6 py-2.5 bg-black border-2 border-red-500 text-red-500 rounded-full font-bold hover:bg-red-500 hover:text-black transition-all"
-              >
-                ✗ Reject
-              </button>
-              <button 
-                onClick={() => setSelectedReview(null)}
-                className="px-6 py-2.5 bg-black border-2 border-slate-500 text-slate-400 rounded-full font-bold hover:bg-slate-500 hover:text-black transition-all"
-              >
-                Skip
-              </button>
+              {/* Contextual buttons based on actionType */}
+              {selectedReview.reviewDetails.actionType === 'fraud-check' && (
+                <>
+                  <button 
+                    onClick={() => setSelectedReview(null)}
+                    className="flex-1 px-6 py-2.5 bg-black border-2 border-blue-500 text-blue-500 rounded-full font-bold hover:bg-blue-500 hover:text-black transition-all"
+                  >
+                    View Full Details
+                  </button>
+                  <button 
+                    onClick={() => setSelectedReview(null)}
+                    className="flex-1 px-6 py-2.5 bg-black border-2 border-red-500 text-red-500 rounded-full font-bold hover:bg-red-500 hover:text-black transition-all"
+                  >
+                    Flag Risk
+                  </button>
+                  <button 
+                    onClick={() => setSelectedReview(null)}
+                    className="px-6 py-2.5 bg-black border-2 border-green-500 text-green-500 rounded-full font-bold hover:bg-green-500 hover:text-black transition-all"
+                  >
+                    Mark Safe
+                  </button>
+                </>
+              )}
+              
+              {selectedReview.reviewDetails.actionType === 'approval' && (
+                <>
+                  <button 
+                    onClick={() => setSelectedReview(null)}
+                    className="flex-1 px-6 py-2.5 bg-black border-2 border-green-500 text-green-500 rounded-full font-bold hover:bg-green-500 hover:text-black transition-all"
+                  >
+                    ✓ Approve
+                  </button>
+                  <button 
+                    onClick={() => setSelectedReview(null)}
+                    className="flex-1 px-6 py-2.5 bg-black border-2 border-amber-500 text-amber-500 rounded-full font-bold hover:bg-amber-500 hover:text-black transition-all"
+                  >
+                    Modify Terms
+                  </button>
+                  <button 
+                    onClick={() => setSelectedReview(null)}
+                    className="px-6 py-2.5 bg-black border-2 border-slate-500 text-slate-400 rounded-full font-bold hover:bg-slate-500 hover:text-black transition-all"
+                  >
+                    Reject
+                  </button>
+                </>
+              )}
+              
+              {selectedReview.reviewDetails.actionType === 'assessment' && (
+                <>
+                  <button 
+                    onClick={() => setSelectedReview(null)}
+                    className="flex-1 px-6 py-2.5 bg-black border-2 border-blue-500 text-blue-500 rounded-full font-bold hover:bg-blue-500 hover:text-black transition-all"
+                  >
+                    View Profile
+                  </button>
+                  <button 
+                    onClick={() => setSelectedReview(null)}
+                    className="flex-1 px-6 py-2.5 bg-black border-2 border-green-500 text-green-500 rounded-full font-bold hover:bg-green-500 hover:text-black transition-all"
+                  >
+                    Schedule Review
+                  </button>
+                  <button 
+                    onClick={() => setSelectedReview(null)}
+                    className="px-6 py-2.5 bg-black border-2 border-slate-500 text-slate-400 rounded-full font-bold hover:bg-slate-500 hover:text-black transition-all"
+                  >
+                    Later
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

@@ -68,8 +68,10 @@ export default function DashboardLayout({ children, location = 'singapore' }: La
       <nav className="hidden md:flex w-64 border-r border-border flex-col bg-card">
         <div className="h-16 px-6 flex items-center border-b border-border">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-sm">AD</span>
+            <div className="w-8 h-8 rounded-full p-0.5 bg-gradient-to-br from-blue-500 to-blue-600">
+              <div className="w-full h-full rounded-full bg-background flex items-center justify-center">
+                <span className="text-blue-500 font-bold text-sm">AD</span>
+              </div>
             </div>
             <span className="text-lg font-semibold text-foreground">
               Agency Platform
