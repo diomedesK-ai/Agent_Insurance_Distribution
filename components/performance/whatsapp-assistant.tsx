@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Mic, MicOff, Camera, Calendar, Users, TrendingUp, Sparkles, CheckCircle, AlertCircle, Info, FileText, Phone } from 'lucide-react';
+import Image from 'next/image';
+import { Send, Mic, MicOff, Camera, Calendar, Users, TrendingUp, Sparkles, CheckCircle, AlertCircle, Info, FileText, Phone, MessageCircle, MessageSquare, Zap, ChevronLeft, Plus, Smile } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -19,6 +20,7 @@ interface Message {
 }
 
 export default function WhatsAppAssistant() {
+  const [platform, setPlatform] = useState<'whatsapp' | 'teams'>('whatsapp');
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -45,10 +47,31 @@ export default function WhatsAppAssistant() {
   const [showRecordingModal, setShowRecordingModal] = useState(false);
   const [lastStructuredSummary, setLastStructuredSummary] = useState<string | null>(null);
   const [meetingReschedules, setMeetingReschedules] = useState<{[key: string]: {newTime: string, reason: string}}>({});
+  const [drawerContent, setDrawerContent] = useState<string | null>(null);
+  const [drawerTitle, setDrawerTitle] = useState<string>('');
+  const [drawerLoading, setDrawerLoading] = useState(false);
+  const [showTeamsSplash, setShowTeamsSplash] = useState(false);
+  const [showWhatsAppSplash, setShowWhatsAppSplash] = useState(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Update welcome message when platform changes
+  useEffect(() => {
+    setMessages(prev => {
+      const updated = [...prev];
+      if (updated[0]?.id === '1') {
+        updated[0] = {
+          ...updated[0],
+          content: platform === 'teams' 
+            ? 'Hi! I\'m your **Agent Companion**.\n\nQuick menu:\n\n**Leads** - Hot/warm/cold list\n**Meetings** - Today\'s schedule\n**Record** - Meeting transcription\n**Compare** - Product comparison\n**Scan** - Photo analysis\n**Pitch AI** - Voice-to-customer pitch builder\n\nTap a button or type!'
+            : '👋 Hi! I\'m your **Agent Companion**. Quick menu:\n\n🔥 **Leads** - Hot/warm/cold list\n📅 **Meetings** - Today\'s schedule\n🎤 **Record** - Meeting transcription\n🎯 **Compare** - Product comparison\n📸 **Scan** - Photo analysis\n💡 **Pitch AI** - Voice-to-customer pitch builder\n\nTap a button or type!'
+        };
+      }
+      return updated;
+    });
+  }, [platform]);
 
   const quickActions = [
     { label: '🔥 Lead List', action: 'show_leads' },
@@ -425,22 +448,93 @@ export default function WhatsAppAssistant() {
         console.log('📝 Transcribed Text:', transcribedText);
         console.log('🤖 Sending to LLM for structured summary...');
         
-        const transcribedMsg: Message = {
-          id: Date.now().toString(),
-          role: 'user',
-          content: `🎤 **Voice Memo Recorded:**\n\n"${transcribedText}"`,
-          timestamp: new Date(),
-          isVoice: true
-        };
-        setMessages(prev => [...prev, transcribedMsg]);
+        // Auto-structure and show in drawer
+        setDrawerTitle('Meeting Summary');
+        setDrawerContent(null);
+        setDrawerLoading(true);
+        
+        setTimeout(async () => {
+          try {
+            const structureQuery = `I recorded a voice memo from a client meeting. Please structure this into a meeting summary:
 
-        // Auto-trigger LLM to structure the memo
-        setTimeout(() => {
-          const structureQuery = `I just recorded a voice memo from a client meeting. Please structure this into a proper meeting summary with sections for: Client Profile, Discussion Points, Client Concerns, Action Items, and Next Steps. Here's the memo:\n\n"${transcribedText}"`;
-          
-          console.log('💬 Structuring Query:', structureQuery);
-          setInput(structureQuery);
-          setTimeout(handleSendMessage, 50);
+**Format:**
+
+**Client Profile**
+Key information about the client
+
+**Discussion Points**
+Main topics discussed
+
+**Client Concerns**
+Concerns or objections raised
+
+**Action Items**
+What needs to be done
+
+**Next Steps**
+Follow-up plan
+
+**Memo:**
+"${transcribedText}"
+
+Keep it concise and actionable. NO EMOJIS.`;
+            
+            console.log('💬 Structuring Query:', structureQuery);
+            
+            const response = await fetch('/api/agents', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                query: structureQuery,
+                location: 'singapore',
+                conversationHistory: [],
+              }),
+            });
+
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+            const reader = response.body?.getReader();
+            const decoder = new TextDecoder();
+            let fullResponse = '';
+
+            if (reader) {
+              let buffer = '';
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                  if (line.startsWith('data: ')) {
+                    const data = line.slice(6);
+                    if (data === '[DONE]') continue;
+
+                    try {
+                      const parsed = JSON.parse(data);
+                      if (parsed.type === 'content' && parsed.chunk) {
+                        fullResponse += parsed.chunk;
+                        setDrawerContent(fullResponse);
+                      }
+                    } catch (e) {
+                      // Skip invalid JSON
+                    }
+                  }
+                }
+              }
+            }
+
+            console.log('✅ Meeting summary generated');
+            setDrawerLoading(false);
+            setLastStructuredSummary(fullResponse);
+            
+          } catch (error) {
+            console.error('❌ Error structuring meeting summary:', error);
+            setDrawerContent('❌ Sorry, I had trouble structuring the summary. Please try again.');
+            setDrawerLoading(false);
+          }
         }, 500);
       }, 5000); // 5 second recording
     } else {
@@ -1066,24 +1160,37 @@ Format your response with clear headings.`;
     console.log('📌 Action:', action);
     console.log('📦 Data:', data);
     
-    // For pitch, keep the flow open and show loading
+    // For pitch, reschedule, and compare, show in drawer instead of chat
     const isPitchAction = action.includes('pitch') || action.includes('Pitch');
+    const isRescheduleAction = action.includes('Reschedule');
+    const isCompareAction = action.includes('Get Quote') || action.includes('Compare') || action.includes('Scan');
+    const showInDrawer = isPitchAction || isRescheduleAction || isCompareAction;
     
-    if (!isPitchAction) {
+    if (!showInDrawer) {
       handleCloseFlow();
+      
+      // Add user action message to chat
+      const actionMsg: Message = {
+        id: Date.now().toString(),
+        role: 'user',
+        content: `📱 ${action}`,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, actionMsg]);
     } else {
-      // Show loading indicator in the flow
-      setLoadingFlow(true);
+      // Show in drawer - set title and loading
+      let title = '';
+      if (isPitchAction) {
+        title = `Pitch for ${data.name}`;
+      } else if (isRescheduleAction) {
+        title = `Reschedule: ${data.client}`;
+      } else if (isCompareAction) {
+        title = action.includes('Scan') ? 'Product Analysis' : `Quote for ${data.productName || 'Product'}`;
+      }
+      setDrawerTitle(title);
+      setDrawerContent(null);
+      setDrawerLoading(true);
     }
-    
-    // Add user action message
-    const actionMsg: Message = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: `📱 ${action}`,
-      timestamp: new Date()
-    };
-    setMessages(prev => [...prev, actionMsg]);
 
     // Generate AI response based on action with rich context
     let query = '';
@@ -1092,19 +1199,19 @@ Format your response with clear headings.`;
 
 **Format as follows (keep it BRIEF and actionable):**
 
-**🎯 Opening**
+**Opening**
 [1 compelling sentence hook]
 
-**💡 Key Message** 
+**Key Message** 
 [2-3 sentences on why ${data.interest} matters for their situation]
 
-**✨ Product**
+**Product**
 ${data.recommendedProduct ? `[2 sentences on ${data.recommendedProduct} benefits]` : '[Recommend best product in 2 sentences]'}
 
-**🚀 Next Step**
+**Next Step**
 [1 clear call-to-action]
 
-Keep it conversational and under 150 words total. This is for WhatsApp, so be concise and punchy.`;
+Keep it conversational and under 150 words total. This is for WhatsApp, so be concise and punchy. NO EMOJIS.`;
     } else if (action.includes('Call') || action.includes('Message')) {
       query = `I want to contact ${data.name} (${data.phone || 'contact'}). They are a ${data.status} lead interested in ${data.interest}, with a lead score of ${data.score}. Last contacted ${data.lastContact}. Provide: 1) A compelling opening line, 2) Personalized value proposition based on their needs, 3) Strong call to action with urgency.`;
     } else if (action.includes('View Details')) {
@@ -1119,43 +1226,50 @@ Keep it conversational and under 150 words total. This is for WhatsApp, so be co
 
 Format this as a structured meeting brief.`;
     } else if (action.includes('Reschedule')) {
-      query = `I need to reschedule my meeting with ${data.client} currently set for ${data.time} (${data.topic}). Provide:
+      query = `Help me reschedule my meeting with ${data.client} currently at ${data.time} (${data.topic}).
 
-1) **3 Alternative Time Slots**: For this week with reasoning
-2) **Professional Message Template**: To send to ${data.client}
-3) **Rescheduling Strategy**: How to maintain rapport
-4) **Follow-up Actions**: What to do after confirmation`;
+**Provide:**
+
+**Alternative Times**
+3 suggested time slots this week with brief reasoning
+
+**Message Template**
+Professional message to send ${data.client}
+
+**Strategy**
+Quick tips to maintain rapport
+
+Keep it concise and actionable. NO EMOJIS.`;
     } else if (action.includes('Get Quote')) {
-      query = `Client wants a quote for **${data.productName}** by ${data.provider}.
+      query = `Generate a quote for ${data.productName} by ${data.provider}.
 
-**Product Details**:
-- Coverage: ${data.coverage}
-- Premium: ${data.premium}
-- Key Features: ${data.keyFeatures?.join(', ')}
+**Product**: ${data.productName}
+**Coverage**: ${data.coverage}
+**Premium**: ${data.premium}
 
-Generate a comprehensive quote presentation with:
+**Provide:**
 
-1) **Coverage Summary**: What's included in clear terms
-2) **Premium Breakdown**: Monthly/annual costs and payment options
-3) **Key Benefits**: Top 5 selling points
-4) **Value Comparison**: Why this beats alternatives
-5) **Next Steps**: How to proceed with application`;
+**Coverage Summary**
+What's included in clear terms
+
+**Premium Breakdown**
+Monthly/annual costs and payment options
+
+**Key Benefits**
+Top 3 selling points
+
+**Next Steps**
+How to proceed
+
+Keep it brief and client-ready. NO EMOJIS.`;
     }
 
     console.log('💬 Generated LLM Query:', query);
     console.log('🚀 Triggering LLM call...');
 
-    // For pitch actions, call LLM directly and show in WhatsApp chat
-    if (isPitchAction) {
+    // For drawer actions (pitch, reschedule, compare), call LLM and show in drawer
+    if (showInDrawer) {
       try {
-        const streamingMsgId = (Date.now() + 2).toString();
-        setMessages(prev => [...prev, {
-          id: streamingMsgId,
-          role: 'assistant',
-          content: '✨ Generating your personalized pitch...',
-          timestamp: new Date()
-        }]);
-
         const response = await fetch('/api/agents', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1191,9 +1305,7 @@ Generate a comprehensive quote presentation with:
                   const parsed = JSON.parse(data);
                   if (parsed.type === 'content' && parsed.chunk) {
                     fullResponse += parsed.chunk;
-                    setMessages(prev => prev.map(msg => 
-                      msg.id === streamingMsgId ? { ...msg, content: fullResponse } : msg
-                    ));
+                    setDrawerContent(fullResponse);
                   }
                 } catch (e) {
                   // Skip invalid JSON
@@ -1203,27 +1315,16 @@ Generate a comprehensive quote presentation with:
           }
         }
 
-        console.log('✅ Pitch generated successfully');
-        setLoadingFlow(false);
-        
-        // Close the flow after a short delay so user can see the pitch in chat
-        setTimeout(() => {
-          handleCloseFlow();
-        }, 500);
+        console.log('✅ Drawer content generated successfully');
+        setDrawerLoading(false);
         
       } catch (error) {
-        console.error('❌ Error generating pitch:', error);
-        setMessages(prev => [...prev, {
-          id: Date.now().toString(),
-          role: 'assistant',
-          content: '❌ Sorry, I had trouble generating the pitch. Please try again.',
-          timestamp: new Date()
-        }]);
-        setLoadingFlow(false);
-        handleCloseFlow();
+        console.error('❌ Error generating content:', error);
+        setDrawerContent('❌ Sorry, I had trouble generating this. Please try again.');
+        setDrawerLoading(false);
       }
     } else {
-      // For other actions, use the original flow
+      // For other actions, use chat
       setTimeout(() => {
         setInput(query);
         setTimeout(handleSendMessage, 50);
@@ -1344,7 +1445,55 @@ Generate a comprehensive quote presentation with:
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-white mb-2">Agent Companion</h1>
-          <p className="text-gray-400">AI-Powered WhatsApp Assistant for Insurance Agents</p>
+          <p className="text-gray-400 mb-4">AI-Powered Assistant for Insurance Agents</p>
+          
+          {/* Platform Toggle */}
+          <div className="flex items-center justify-center space-x-3">
+            <button
+              onClick={() => {
+                if (platform !== 'whatsapp') {
+                  setShowWhatsAppSplash(true);
+                  setTimeout(() => {
+                    setPlatform('whatsapp');
+                    setTimeout(() => setShowWhatsAppSplash(false), 2000);
+                  }, 100);
+                }
+              }}
+              className={`w-44 h-14 px-6 py-3 rounded-full font-bold transition-all flex items-center justify-center space-x-2.5 text-lg ${
+                platform === 'whatsapp'
+                  ? 'bg-green-600 text-white shadow-lg'
+                  : 'bg-zinc-800 text-gray-400 hover:bg-zinc-700'
+              }`}
+            >
+              <MessageCircle className="h-6 w-6" />
+              <span>WhatsApp</span>
+            </button>
+            <button
+              onClick={() => {
+                if (platform !== 'teams') {
+                  setShowTeamsSplash(true);
+                  setTimeout(() => {
+                    setPlatform('teams');
+                    setTimeout(() => setShowTeamsSplash(false), 2000);
+                  }, 100);
+                }
+              }}
+              className={`w-44 h-14 px-6 py-3 rounded-full font-bold transition-all flex items-center justify-center space-x-2.5 text-lg ${
+                platform === 'teams'
+                  ? 'bg-[#6264A7] text-white shadow-lg'
+                  : 'bg-zinc-800 text-gray-400 hover:bg-zinc-700'
+              }`}
+            >
+              <Image 
+                src="/MS_Teams_Logo.png" 
+                alt="Teams" 
+                width={40}
+                height={40}
+                className="h-10 w-10 object-contain -ml-1"
+              />
+              <span>Teams</span>
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
@@ -1436,16 +1585,74 @@ Generate a comprehensive quote presentation with:
                 
                 {/* Screen with proper padding */}
                 <div className="w-full h-full p-[14px]">
-                  <div className="w-full h-full bg-white rounded-[42px] overflow-hidden flex flex-col">
-                  {/* WhatsApp Header */}
-                  <div className="bg-gradient-to-r from-green-600 to-green-500 px-5 py-4 shadow-lg">
-                    <div className="font-bold text-white text-lg">Agent Companion</div>
-                    <div className="text-xs text-green-100">Online • Powered by LLM</div>
-                  </div>
+                  <div className="w-full h-full bg-white rounded-[42px] overflow-hidden flex flex-col relative">
+                  {/* WhatsApp Splash Screen */}
+                  {showWhatsAppSplash && (
+                    <div className="absolute inset-0 bg-white z-[100] flex items-center justify-center rounded-[42px]">
+                      <div className="relative w-full h-full animate-in fade-in zoom-in duration-700">
+                        <Image 
+                          src="/whatsapp-splash_w.jpg" 
+                          alt="WhatsApp" 
+                          fill
+                          className="object-cover rounded-[42px]"
+                          priority
+                        />
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Teams Splash Screen */}
+                  {showTeamsSplash && (
+                    <div className="absolute inset-0 bg-white z-[100] flex items-center justify-center rounded-[42px]">
+                      <div className="relative w-[300px] h-[500px] animate-in fade-in zoom-in duration-700">
+                        <Image 
+                          src="/teams-splash.jpg" 
+                          alt="Microsoft Teams" 
+                          fill
+                          className="object-contain"
+                          priority
+                        />
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Platform Header */}
+                  {platform === 'whatsapp' ? (
+                    <div className="bg-gradient-to-r from-green-600 to-green-500 px-5 py-4 shadow-sm">
+                      <div className="font-bold text-white text-lg">Agent Companion</div>
+                      <div className="text-xs text-green-100">Online • Powered by LLM</div>
+                    </div>
+                  ) : (
+                    <div className="bg-[#F5F5F5] px-4 py-6 flex items-center space-x-3">
+                      {/* Back Arrow */}
+                      <button className="text-gray-700 hover:text-gray-900">
+                        <ChevronLeft className="h-5 w-5" strokeWidth={2} />
+                      </button>
+                      
+                      {/* Profile Circle with Green Dot */}
+                      <div className="relative">
+                        <div className="w-9 h-9 rounded-full bg-[#6264A7] flex items-center justify-center text-white text-xs font-bold">
+                          AI
+                        </div>
+                        <div className="absolute bottom-0 right-0 w-3 h-3 bg-[#92C353] rounded-full border-2 border-[#F5F5F5]"></div>
+                      </div>
+                      
+                      {/* Title and Status */}
+                      <div className="flex-1">
+                        <div className="font-semibold text-gray-900 text-sm flex items-center">
+                          Agent Copilot
+                          <ChevronLeft className="h-3 w-3 ml-1 rotate-180 text-gray-500" />
+                        </div>
+                        <div className="text-[11px] text-gray-500">Available</div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Messages Area or Flow View */}
-                  <div className="flex-1 overflow-y-auto overflow-x-hidden bg-[#E5DDD5]" style={{
-                    backgroundImage: activeFlow ? 'none' : 'url("data:image/svg+xml,%3Csvg width=\'100\' height=\'100\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cpath d=\'M0 0h100v100H0z\' fill=\'%23E5DDD5\'/%3E%3Cpath d=\'M20 20h60v60H20z\' fill=\'%23DCF8C6\' opacity=\'.03\'/%3E%3C/svg%3E")'
+                  <div className={`flex-1 overflow-y-auto overflow-x-hidden ${
+                    platform === 'whatsapp' ? 'bg-[#E5DDD5]' : 'bg-white'
+                  }`} style={{
+                    backgroundImage: activeFlow ? 'none' : (platform === 'whatsapp' ? 'url("data:image/svg+xml,%3Csvg width=\'100\' height=\'100\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cpath d=\'M0 0h100v100H0z\' fill=\'%23E5DDD5\'/%3E%3Cpath d=\'M20 20h60v60H20z\' fill=\'%23DCF8C6\' opacity=\'.03\'/%3E%3C/svg%3E")' : 'none')
                   }}>
                     {activeFlow && flowData ? (
                       // WhatsApp Flow View
@@ -1589,30 +1796,55 @@ Generate a comprehensive quote presentation with:
                                     </div>
                                   </div>
                                   <div className="grid grid-cols-3 gap-2">
-                                    <div className="rounded-full p-0.5 bg-gradient-to-br from-green-500 to-green-600">
-                                      <button 
-                                        onClick={() => handleFlowAction(`Call ${lead.name}`, lead)}
-                                        className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-colors text-green-600 hover:bg-green-50"
-                                      >
-                                        📞 Call
-                                      </button>
-                                    </div>
-                                    <div className="rounded-full p-0.5 bg-gradient-to-br from-blue-500 to-blue-600">
-                                      <button 
-                                        onClick={() => handleFlowAction(`Message ${lead.name}`, lead)}
-                                        className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-colors text-blue-600 hover:bg-blue-50"
-                                      >
-                                        💬 Message
-                                      </button>
-                                    </div>
-                                    <div className="rounded-full p-0.5 bg-gradient-to-br from-amber-500 to-amber-600">
-                                      <button 
-                                        onClick={() => handleFlowAction(`Generate personalized pitch for ${lead.name}`, lead)}
-                                        className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-colors text-amber-600 hover:bg-amber-50"
-                                      >
-                                        ✨ Pitch
-                                      </button>
-                                    </div>
+                                    {platform === 'teams' ? (
+                                      <>
+                                        <button 
+                                          onClick={() => handleFlowAction(`Call ${lead.name}`, lead)}
+                                          className="px-3 py-2 bg-white border-2 border-[#6264A7] rounded-full text-xs font-semibold transition-colors text-[#6264A7] hover:bg-[#F5F5FF]"
+                                        >
+                                          Call
+                                        </button>
+                                        <button 
+                                          onClick={() => handleFlowAction(`Message ${lead.name}`, lead)}
+                                          className="px-3 py-2 bg-white border-2 border-[#6264A7] rounded-full text-xs font-semibold transition-colors text-[#6264A7] hover:bg-[#F5F5FF]"
+                                        >
+                                          Message
+                                        </button>
+                                        <button 
+                                          onClick={() => handleFlowAction(`Generate personalized pitch for ${lead.name}`, lead)}
+                                          className="px-3 py-2 bg-white border-2 border-[#6264A7] rounded-full text-xs font-semibold transition-colors text-[#6264A7] hover:bg-[#F5F5FF]"
+                                        >
+                                          Pitch
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <div className="rounded-full p-0.5 bg-gradient-to-br from-green-500 to-green-600">
+                                          <button 
+                                            onClick={() => handleFlowAction(`Call ${lead.name}`, lead)}
+                                            className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-colors text-green-600 hover:bg-green-50"
+                                          >
+                                            📞 Call
+                                          </button>
+                                        </div>
+                                        <div className="rounded-full p-0.5 bg-gradient-to-br from-blue-500 to-blue-600">
+                                          <button 
+                                            onClick={() => handleFlowAction(`Message ${lead.name}`, lead)}
+                                            className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-colors text-blue-600 hover:bg-blue-50"
+                                          >
+                                            💬 Message
+                                          </button>
+                                        </div>
+                                        <div className="rounded-full p-0.5 bg-gradient-to-br from-amber-500 to-amber-600">
+                                          <button 
+                                            onClick={() => handleFlowAction(`Generate personalized pitch for ${lead.name}`, lead)}
+                                            className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-colors text-amber-600 hover:bg-amber-50"
+                                          >
+                                            ✨ Pitch
+                                          </button>
+                                        </div>
+                                      </>
+                                    )}
                                   </div>
                                 </div>
                               ))}
@@ -1943,13 +2175,18 @@ Generate a comprehensive quote presentation with:
                     {messages.map((message) => (
                       <div
                         key={message.id}
-                        className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                        className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} mb-3`}
                       >
+                        {platform === 'teams' && message.role === 'assistant' && (
+                          <div className="w-6 h-6 rounded-full bg-[#6264A7] flex items-center justify-center text-white text-[8px] font-bold mr-2 flex-shrink-0 mt-1">
+                            AI
+                          </div>
+                        )}
                         <div
-                          className={`max-w-[80%] rounded-xl px-4 py-2.5 shadow-sm ${
-                            message.role === 'user'
-                              ? 'bg-[#DCF8C6]'
-                              : 'bg-white'
+                          className={`max-w-[75%] px-3 py-2 ${
+                            platform === 'whatsapp'
+                              ? `rounded-xl shadow-sm ${message.role === 'user' ? 'bg-[#DCF8C6]' : 'bg-white'}`
+                              : `rounded-md ${message.role === 'user' ? 'bg-[#6264A7] text-white shadow-sm' : 'bg-gray-100'}`
                           }`}
                         >
                           {message.isVoice && (
@@ -2029,28 +2266,14 @@ Generate a comprehensive quote presentation with:
                       </div>
                     ))}
 
-                    {/* Quick Actions */}
-                    {showQuickActions && messages.length <= 1 && (
-                      <div className="grid grid-cols-2 gap-2.5 mt-4">
-                        {quickActions.map((action, idx) => (
-                          <button
-                            key={idx}
-                            onClick={() => handleQuickAction(action.action)}
-                            className="bg-white p-3.5 rounded-xl shadow-md hover:shadow-lg transition-all text-sm font-medium text-gray-700 text-left hover:bg-green-50"
-                          >
-                            {action.label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
 
                     {loading && (
                       <div className="flex justify-start">
                         <div className="bg-white rounded-xl px-5 py-3.5 shadow-sm">
                           <div className="flex space-x-2">
-                            <div className="w-2.5 h-2.5 bg-gray-400 rounded-full animate-bounce"></div>
-                            <div className="w-2.5 h-2.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                            <div className="w-2.5 h-2.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+                            <div className="w-2.5 h-2.5 bg-gray-400 rounded-full" style={{ animation: 'bounce 1s infinite' }}></div>
+                            <div className="w-2.5 h-2.5 bg-gray-400 rounded-full" style={{ animation: 'bounce 1s infinite 0.2s' }}></div>
+                            <div className="w-2.5 h-2.5 bg-gray-400 rounded-full" style={{ animation: 'bounce 1s infinite 0.4s' }}></div>
                           </div>
                         </div>
                       </div>
@@ -2080,62 +2303,87 @@ Generate a comprehensive quote presentation with:
                     <div className="grid grid-cols-3 gap-1.5 mb-2">
                       <button
                         onClick={() => handleOpenFlow('leads')}
-                        className={`px-2 py-2 rounded-lg text-[9px] font-semibold transition-colors ${
-                          loadingFlow ? 'bg-red-100 text-red-400 cursor-not-allowed opacity-50' : 'bg-red-50 text-red-700 hover:bg-red-100'
-                        }`}
+                        className={platform === 'teams'
+                          ? `px-2 py-2 bg-white border-2 border-[#6264A7] rounded-lg text-[9px] font-semibold transition-colors text-[#6264A7] hover:bg-[#F5F5FF] ${loadingFlow ? 'opacity-50 cursor-not-allowed' : ''}`
+                          : `px-2 py-2 rounded-lg text-[9px] font-semibold transition-colors ${
+                              loadingFlow ? 'bg-red-100 text-red-400 cursor-not-allowed opacity-50' : 'bg-red-50 text-red-700 hover:bg-red-100'
+                            }`
+                        }
                         disabled={loading || loadingFlow}
                       >
-                        {loadingFlow ? '⏳' : '🔥'} Leads
+                        {platform === 'teams' ? 'Leads' : (loadingFlow ? '⏳' : '🔥') + ' Leads'}
                       </button>
                       <button
                         onClick={() => handleOpenFlow('meetings')}
-                        className={`px-2 py-2 rounded-lg text-[9px] font-semibold transition-colors ${
-                          loadingFlow ? 'bg-purple-100 text-purple-400 cursor-not-allowed opacity-50' : 'bg-purple-50 text-purple-700 hover:bg-purple-100'
-                        }`}
+                        className={platform === 'teams'
+                          ? `px-2 py-2 bg-white border-2 border-[#6264A7] rounded-lg text-[9px] font-semibold transition-colors text-[#6264A7] hover:bg-[#F5F5FF] ${loadingFlow ? 'opacity-50 cursor-not-allowed' : ''}`
+                          : `px-2 py-2 rounded-lg text-[9px] font-semibold transition-colors ${
+                              loadingFlow ? 'bg-purple-100 text-purple-400 cursor-not-allowed opacity-50' : 'bg-purple-50 text-purple-700 hover:bg-purple-100'
+                            }`
+                        }
                         disabled={loading || loadingFlow}
                       >
-                        {loadingFlow ? '⏳' : '📅'} Meetings
+                        {platform === 'teams' ? 'Meetings' : (loadingFlow ? '⏳' : '📅') + ' Meetings'}
                       </button>
                       <button
                         onClick={handleVoiceRecording}
-                        className={`px-2 py-2 rounded-lg text-[9px] font-semibold transition-colors ${
-                          isRecording 
-                            ? 'bg-red-100 text-red-700 animate-pulse' 
-                            : 'bg-green-50 text-green-700 hover:bg-green-100'
-                        }`}
+                        className={platform === 'teams'
+                          ? `px-2 py-2 bg-white border-2 border-[#6264A7] rounded-lg text-[9px] font-semibold transition-colors text-[#6264A7] hover:bg-[#F5F5FF] ${isRecording ? 'animate-pulse' : ''}`
+                          : `px-2 py-2 rounded-lg text-[9px] font-semibold transition-colors ${
+                              isRecording 
+                                ? 'bg-red-100 text-red-700 animate-pulse' 
+                                : 'bg-green-50 text-green-700 hover:bg-green-100'
+                            }`
+                        }
                         disabled={loading}
                       >
-                        🎤 Record
+                        {platform === 'teams' ? 'Record' : '🎤 Record'}
                       </button>
                       <button
                         onClick={() => handleOpenFlow('compare')}
-                        className={`px-2 py-2 rounded-lg text-[9px] font-semibold transition-colors ${
-                          loadingFlow ? 'bg-orange-100 text-orange-400 cursor-not-allowed opacity-50' : 'bg-orange-50 text-orange-700 hover:bg-orange-100'
-                        }`}
+                        className={platform === 'teams'
+                          ? `px-2 py-2 bg-white border-2 border-[#6264A7] rounded-lg text-[9px] font-semibold transition-colors text-[#6264A7] hover:bg-[#F5F5FF] ${loadingFlow ? 'opacity-50 cursor-not-allowed' : ''}`
+                          : `px-2 py-2 rounded-lg text-[9px] font-semibold transition-colors ${
+                              loadingFlow ? 'bg-orange-100 text-orange-400 cursor-not-allowed opacity-50' : 'bg-orange-50 text-orange-700 hover:bg-orange-100'
+                            }`
+                        }
                         disabled={loading || loadingFlow}
                       >
-                        {loadingFlow ? '⏳' : '🎯'} Compare
+                        {platform === 'teams' ? 'Compare' : (loadingFlow ? '⏳' : '🎯') + ' Compare'}
                       </button>
                       <button
                         onClick={handlePhotoUpload}
-                        className="px-2 py-2 bg-blue-50 text-blue-700 rounded-lg text-[9px] font-semibold hover:bg-blue-100 transition-colors"
+                        className={platform === 'teams'
+                          ? "px-2 py-2 bg-white border-2 border-[#6264A7] rounded-lg text-[9px] font-semibold transition-colors text-[#6264A7] hover:bg-[#F5F5FF]"
+                          : "px-2 py-2 bg-blue-50 text-blue-700 rounded-lg text-[9px] font-semibold hover:bg-blue-100 transition-colors"
+                        }
                         disabled={loading}
                       >
-                        📸 Scan
+                        {platform === 'teams' ? 'Scan' : '📸 Scan'}
                       </button>
                       <button
                         onClick={() => handleOpenFlow('pitch')}
-                        className={`px-2 py-2 rounded-lg text-[9px] font-semibold transition-colors ${
-                          loadingFlow ? 'bg-pink-100 text-pink-400 cursor-not-allowed opacity-50' : 'bg-pink-50 text-pink-700 hover:bg-pink-100'
-                        }`}
+                        className={platform === 'teams'
+                          ? `px-2 py-2 bg-white border-2 border-[#6264A7] rounded-lg text-[9px] font-semibold transition-colors text-[#6264A7] hover:bg-[#F5F5FF] ${loadingFlow ? 'opacity-50 cursor-not-allowed' : ''}`
+                          : `px-2 py-2 rounded-lg text-[9px] font-semibold transition-colors ${
+                              loadingFlow ? 'bg-pink-100 text-pink-400 cursor-not-allowed opacity-50' : 'bg-pink-50 text-pink-700 hover:bg-pink-100'
+                            }`
+                        }
                         disabled={loading || loadingFlow}
                       >
-                        {loadingFlow ? '⏳' : '💡'} Pitch AI
+                        {platform === 'teams' ? 'Pitch AI' : (loadingFlow ? '⏳' : '💡') + ' Pitch AI'}
                       </button>
                     </div>
 
                     {/* Input Area */}
-                    <div className="flex items-center space-x-2">
+                    <div className={`flex items-center ${platform === 'teams' ? 'space-x-3 px-3' : 'space-x-2'}`}>
+                      {/* Teams: Purple + Button */}
+                      {platform === 'teams' && (
+                        <button className="w-7 h-7 rounded-full bg-[#6264A7] flex items-center justify-center text-white hover:bg-[#7B83EB] transition-colors flex-shrink-0">
+                          <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                        </button>
+                      )}
+                      
                       <input
                         type="text"
                         value={input}
@@ -2146,8 +2394,12 @@ Generate a comprehensive quote presentation with:
                             handleSendMessage();
                           }
                         }}
-                        placeholder="Type or use menu..."
-                        className="flex-1 px-4 py-2 bg-gray-100 rounded-full text-xs text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500"
+                        placeholder={platform === 'whatsapp' ? 'Type or use menu...' : 'Type a message'}
+                        className={`flex-1 py-2 text-xs text-gray-900 placeholder-gray-400 focus:outline-none ${
+                          platform === 'whatsapp'
+                            ? 'px-4 bg-gray-100 rounded-full focus:ring-2 focus:ring-green-500'
+                            : 'px-3 bg-white border-0 focus:ring-0'
+                        }`}
                         disabled={loading}
                       />
 
@@ -2155,30 +2407,216 @@ Generate a comprehensive quote presentation with:
                         <button
                           onClick={handleSendMessage}
                           disabled={loading}
-                          className="p-2 bg-green-600 text-white rounded-full hover:bg-green-700 transition-colors disabled:opacity-50 shadow-md flex-shrink-0"
+                          className={`transition-colors disabled:opacity-50 flex-shrink-0 ${
+                            platform === 'whatsapp'
+                              ? 'p-2 bg-green-600 hover:bg-green-700 rounded-full text-white shadow-sm'
+                              : 'text-[#6264A7] hover:text-[#7B83EB]'
+                          }`}
                         >
-                          <Send className="h-3.5 w-3.5" />
+                          <Send className="h-5 w-5" fill={platform === 'teams' ? 'currentColor' : 'none'} />
                         </button>
                       ) : (
-                        <button
-                          onClick={handleVoiceRecording}
-                          className={`p-2 rounded-full transition-colors shadow-md flex-shrink-0 ${
-                            isRecording
-                              ? 'bg-red-600 text-white animate-pulse'
-                              : 'bg-green-600 text-white hover:bg-green-700'
-                          }`}
-                          disabled={loading}
-                        >
-                          {isRecording ? (
-                            <MicOff className="h-3.5 w-3.5" />
+                        <>
+                          {platform === 'teams' ? (
+                            <>
+                              <button className="text-gray-600 hover:text-gray-800 transition-colors flex-shrink-0">
+                                <Smile className="h-5 w-5" />
+                              </button>
+                              <button className="text-gray-600 hover:text-gray-800 transition-colors flex-shrink-0">
+                                <Camera className="h-5 w-5" />
+                              </button>
+                              <button
+                                onClick={handleVoiceRecording}
+                                className="text-gray-600 hover:text-gray-800 transition-colors flex-shrink-0"
+                                disabled={loading}
+                              >
+                                <Mic className="h-5 w-5" />
+                              </button>
+                            </>
                           ) : (
-                            <Mic className="h-3.5 w-3.5" />
+                            <button
+                              onClick={handleVoiceRecording}
+                              className={`p-2 transition-colors shadow-sm flex-shrink-0 ${
+                                isRecording
+                                  ? 'bg-red-600 text-white animate-pulse rounded-full'
+                                  : 'bg-green-600 text-white hover:bg-green-700 rounded-full'
+                              }`}
+                              disabled={loading}
+                            >
+                              {isRecording ? (
+                                <MicOff className="h-3.5 w-3.5" />
+                              ) : (
+                                <Mic className="h-3.5 w-3.5" />
+                              )}
+                            </button>
                           )}
-                        </button>
+                        </>
                       )}
                     </div>
                   </div>
+                  
+                  {/* Teams Bottom Navigation */}
+                  {platform === 'teams' && !activeFlow && (
+                    <div className="bg-white border-t border-gray-200 px-2 py-1 flex items-center justify-around">
+                      <button className="flex flex-col items-center py-1.5 px-3 text-gray-500 hover:text-[#6264A7] transition-colors">
+                        <Zap className="h-4 w-4 mb-0.5" />
+                        <span className="text-[9px] font-medium">Activity</span>
+                      </button>
+                      <button className="flex flex-col items-center py-1.5 px-3 text-[#6264A7] transition-colors">
+                        <MessageSquare className="h-4 w-4 mb-0.5" />
+                        <span className="text-[9px] font-medium">Chat</span>
+                      </button>
+                      <button className="flex flex-col items-center py-1.5 px-3 text-gray-500 hover:text-[#6264A7] transition-colors">
+                        <Users className="h-4 w-4 mb-0.5" />
+                        <span className="text-[9px] font-medium">Teams</span>
+                      </button>
+                      <button className="flex flex-col items-center py-1.5 px-3 text-gray-500 hover:text-[#6264A7] transition-colors">
+                        <Calendar className="h-4 w-4 mb-0.5" />
+                        <span className="text-[9px] font-medium">Calendar</span>
+                      </button>
+                    </div>
+                  )}
                   </>
+                  )}
+                  
+                  {/* Recording Modal - inside iPhone */}
+                  {showRecordingModal && (
+                    <div className="absolute inset-0 bg-black/70 z-50 flex items-center justify-center backdrop-blur-sm rounded-[42px]">
+                      <div className="bg-white rounded-2xl p-6 shadow-2xl max-w-[90%] w-[320px] text-center">
+                        {/* Animated Recording Icon */}
+                        <div className="mb-4 flex justify-center">
+                          <div className="relative">
+                            {/* Pulsing outer rings */}
+                            <div className="absolute inset-0 bg-red-500 rounded-full opacity-75" style={{ animation: 'ping 1s cubic-bezier(0, 0, 0.2, 1) infinite' }}></div>
+                            <div className="absolute inset-0 bg-red-500 rounded-full opacity-50" style={{ animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite 0.3s' }}></div>
+                            
+                            {/* Main mic icon */}
+                            <div className="relative bg-gradient-to-br from-red-500 to-red-600 rounded-full p-6">
+                              <Mic className="h-12 w-12 text-white" />
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* Status Text */}
+                        <div className="mb-3">
+                          <div className="text-xl font-bold text-gray-900 mb-1">Recording...</div>
+                          <div className="text-base text-gray-600 font-mono">{recordingDuration.toFixed(1)}s</div>
+                        </div>
+                        
+                        {/* Waveform Animation */}
+                        <div className="flex items-center justify-center space-x-0.5 mb-4 h-10">
+                          {[...Array(16)].map((_, i) => {
+                            const duration = 0.5 + Math.random() * 0.5;
+                            const delay = i * 0.05;
+                            return (
+                              <div
+                                key={i}
+                                className="w-1 bg-red-500 rounded-full transition-all"
+                                style={{
+                                  height: `${Math.random() * 100}%`,
+                                  animation: `pulse ${duration}s ease-in-out ${delay}s infinite`
+                                }}
+                              />
+                            );
+                          })}
+                        </div>
+                        
+                        {/* Info Text */}
+                        <div className="text-xs text-gray-500 mb-4">
+                          Speak clearly about your client meeting...
+                        </div>
+                        
+                        {/* Stop Button */}
+                        <button
+                          onClick={handleVoiceRecording}
+                          className="px-6 py-2 bg-gray-800 text-white rounded-full font-medium hover:bg-gray-900 transition-colors text-sm"
+                        >
+                          ⏹️ Stop Recording
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Bottom Drawer - inside iPhone */}
+                  {drawerContent !== null && (
+                    <div className="absolute bottom-0 left-0 right-0 bg-white border-t-2 border-gray-300 shadow-2xl z-50 animate-in slide-in-from-bottom duration-300 max-h-[45%] overflow-hidden flex flex-col rounded-b-[42px]">
+                      {/* Drawer Header */}
+                      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-purple-50">
+                        <div className="flex items-center space-x-2">
+                          <div className="h-7 w-7 rounded-full bg-transparent border-2 border-blue-500 flex items-center justify-center">
+                            <Sparkles className="h-3.5 w-3.5 text-blue-600" />
+                          </div>
+                          <h3 className="font-semibold text-gray-900 text-sm">{drawerTitle}</h3>
+                        </div>
+                        <button
+                          onClick={() => setDrawerContent(null)}
+                          className="h-6 w-6 rounded-full bg-transparent border border-gray-400 text-gray-600 hover:border-gray-600 hover:text-gray-800 transition-colors flex items-center justify-center text-xs"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      
+                      {/* Drawer Content */}
+                      <div className="flex-1 overflow-y-auto p-4">
+                        {drawerLoading ? (
+                          <div className="flex flex-col items-center justify-center py-8">
+                            <div className="flex space-x-2 mb-4">
+                              <div className="w-2 h-2 bg-blue-500 rounded-full" style={{ animation: 'bounce 1s infinite' }}></div>
+                              <div className="w-2 h-2 bg-blue-500 rounded-full" style={{ animation: 'bounce 1s infinite 0.2s' }}></div>
+                              <div className="w-2 h-2 bg-blue-500 rounded-full" style={{ animation: 'bounce 1s infinite 0.4s' }}></div>
+                            </div>
+                            <p className="text-xs text-gray-600">Generating...</p>
+                          </div>
+                        ) : (
+                          <div className="prose prose-xs max-w-none text-xs">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {drawerContent || ''}
+                            </ReactMarkdown>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Drawer Actions */}
+                      {!drawerLoading && drawerContent && (
+                        <div className="px-3 py-2 border-t border-gray-200 bg-gray-50 flex items-center space-x-2">
+                          <button
+                            onClick={() => {
+                              setMessages(prev => [...prev, {
+                                id: Date.now().toString(),
+                                role: 'assistant',
+                                content: drawerContent,
+                                timestamp: new Date()
+                              }]);
+                              setDrawerContent(null);
+                              handleCloseFlow();
+                            }}
+                            className="flex-1 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-full font-medium text-xs hover:from-blue-600 hover:to-blue-700 transition-all shadow-sm flex items-center justify-center space-x-1.5"
+                          >
+                            <div className="h-4 w-4 rounded-full bg-white/20 flex items-center justify-center">
+                              <Send className="h-2 w-2" />
+                            </div>
+                            <span>Send</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(drawerContent);
+                            }}
+                            className="flex-1 px-3 py-1.5 bg-white border-2 border-gray-300 text-gray-700 rounded-full font-medium text-xs hover:bg-gray-50 transition-all flex items-center justify-center space-x-1.5"
+                          >
+                            <div className="h-4 w-4 rounded-full bg-transparent border border-gray-400 flex items-center justify-center">
+                              <FileText className="h-2 w-2 text-gray-600" />
+                            </div>
+                            <span>Copy</span>
+                          </button>
+                          <button
+                            onClick={() => setDrawerContent(null)}
+                            className="h-7 w-7 bg-white border-2 border-gray-300 text-gray-700 rounded-full font-medium text-xs hover:bg-gray-50 transition-all flex items-center justify-center flex-shrink-0"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   )}
                   
                   {/* iPhone Home Indicator */}
@@ -2299,61 +2737,6 @@ Generate a comprehensive quote presentation with:
                 Cancel
               </button>
             </div>
-          </div>
-        </div>
-      )}
-      
-      {/* Recording Modal Overlay */}
-      {showRecordingModal && (
-        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center backdrop-blur-sm">
-          <div className="bg-white rounded-3xl p-10 shadow-2xl max-w-md w-full mx-4 text-center">
-            {/* Animated Recording Icon */}
-            <div className="mb-6 flex justify-center">
-              <div className="relative">
-                {/* Pulsing outer rings */}
-                <div className="absolute inset-0 bg-red-500 rounded-full animate-ping opacity-75"></div>
-                <div className="absolute inset-0 bg-red-500 rounded-full animate-pulse opacity-50" style={{ animationDelay: '0.3s' }}></div>
-                
-                {/* Main mic icon */}
-                <div className="relative bg-gradient-to-br from-red-500 to-red-600 rounded-full p-8">
-                  <Mic className="h-16 w-16 text-white" />
-                </div>
-              </div>
-            </div>
-            
-            {/* Status Text */}
-            <div className="mb-4">
-              <div className="text-2xl font-bold text-gray-900 mb-2">Recording...</div>
-              <div className="text-lg text-gray-600 font-mono">{recordingDuration.toFixed(1)}s</div>
-            </div>
-            
-            {/* Waveform Animation */}
-            <div className="flex items-center justify-center space-x-1 mb-6 h-12">
-              {[...Array(20)].map((_, i) => (
-                <div
-                  key={i}
-                  className="w-1 bg-red-500 rounded-full transition-all"
-                  style={{
-                    height: `${Math.random() * 100}%`,
-                    animation: `pulse 0.${5 + Math.random() * 5}s ease-in-out infinite`,
-                    animationDelay: `${i * 0.05}s`
-                  }}
-                />
-              ))}
-            </div>
-            
-            {/* Info Text */}
-            <div className="text-sm text-gray-500 mb-6">
-              Speak clearly about your client meeting...
-            </div>
-            
-            {/* Stop Button */}
-            <button
-              onClick={handleVoiceRecording}
-              className="px-8 py-3 bg-gray-800 text-white rounded-full font-semibold hover:bg-gray-900 transition-colors"
-            >
-              ⏹️ Stop Recording
-            </button>
           </div>
         </div>
       )}

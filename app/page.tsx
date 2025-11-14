@@ -41,7 +41,7 @@ export default function Home() {
   const aiImpact = [
     {
       id: 'revenue',
-      value: 'SGD 2.4M',
+      value: '$ 2.4M',
       secondaryValue: 'vs 1.7M',
       label: 'Revenue (AI)',
       sublabel: '',
