@@ -1819,28 +1819,37 @@ Keep it brief and client-ready. NO EMOJIS.`;
                                       </>
                                     ) : (
                                       <>
-                                        <div className="rounded-full p-0.5 bg-gradient-to-br from-green-500 to-green-600">
+                                        <div className="rounded-full p-[2px] bg-gradient-to-br from-green-500 to-green-600 shadow-sm">
                                           <button 
                                             onClick={() => handleFlowAction(`Call ${lead.name}`, lead)}
-                                            className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-colors text-green-600 hover:bg-green-50"
+                                            className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-all text-green-600 hover:bg-green-50 ring-0 border-0 outline-none"
                                           >
-                                            📞 Call
+                                            <span className="inline-flex items-center gap-1.5">
+                                              <span>📞</span>
+                                              <span>Call</span>
+                                            </span>
                                           </button>
                                         </div>
-                                        <div className="rounded-full p-0.5 bg-gradient-to-br from-blue-500 to-blue-600">
+                                        <div className="rounded-full p-[2px] bg-gradient-to-br from-blue-500 to-blue-600 shadow-sm">
                                           <button 
                                             onClick={() => handleFlowAction(`Message ${lead.name}`, lead)}
-                                            className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-colors text-blue-600 hover:bg-blue-50"
+                                            className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-all text-blue-600 hover:bg-blue-50 ring-0 border-0 outline-none"
                                           >
-                                            💬 Message
+                                            <span className="inline-flex items-center gap-1.5">
+                                              <span>💬</span>
+                                              <span>Message</span>
+                                            </span>
                                           </button>
                                         </div>
-                                        <div className="rounded-full p-0.5 bg-gradient-to-br from-amber-500 to-amber-600">
+                                        <div className="rounded-full p-[2px] bg-gradient-to-br from-amber-500 to-amber-600 shadow-sm">
                                           <button 
                                             onClick={() => handleFlowAction(`Generate personalized pitch for ${lead.name}`, lead)}
-                                            className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-colors text-amber-600 hover:bg-amber-50"
+                                            className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-all text-amber-600 hover:bg-amber-50 ring-0 border-0 outline-none"
                                           >
-                                            ✨ Pitch
+                                            <span className="inline-flex items-center gap-1.5">
+                                              <span>✨</span>
+                                              <span>Pitch</span>
+                                            </span>
                                           </button>
                                         </div>
                                       </>
