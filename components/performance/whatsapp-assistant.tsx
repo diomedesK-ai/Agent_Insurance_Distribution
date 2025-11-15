@@ -1800,21 +1800,24 @@ Keep it brief and client-ready. NO EMOJIS.`;
                                       <>
                                         <button 
                                           onClick={() => handleFlowAction(`Call ${lead.name}`, lead)}
-                                          className="px-3 py-2 bg-white border-2 border-[#6264A7] rounded-full text-xs font-semibold transition-colors text-[#6264A7] hover:bg-[#F5F5FF]"
+                                          className="flex items-center justify-center gap-1.5 px-3 py-2 bg-white border-2 border-[#6264A7] rounded-full text-xs font-semibold transition-colors text-[#6264A7] hover:bg-[#F5F5FF]"
                                         >
-                                          Call
+                                          <Phone className="w-3.5 h-3.5" />
+                                          <span>Call</span>
                                         </button>
                                         <button 
                                           onClick={() => handleFlowAction(`Message ${lead.name}`, lead)}
-                                          className="px-3 py-2 bg-white border-2 border-[#6264A7] rounded-full text-xs font-semibold transition-colors text-[#6264A7] hover:bg-[#F5F5FF]"
+                                          className="flex items-center justify-center gap-1.5 px-3 py-2 bg-white border-2 border-[#6264A7] rounded-full text-xs font-semibold transition-colors text-[#6264A7] hover:bg-[#F5F5FF]"
                                         >
-                                          Message
+                                          <MessageCircle className="w-3.5 h-3.5" />
+                                          <span>Message</span>
                                         </button>
                                         <button 
                                           onClick={() => handleFlowAction(`Generate personalized pitch for ${lead.name}`, lead)}
-                                          className="px-3 py-2 bg-white border-2 border-[#6264A7] rounded-full text-xs font-semibold transition-colors text-[#6264A7] hover:bg-[#F5F5FF]"
+                                          className="flex items-center justify-center gap-1.5 px-3 py-2 bg-white border-2 border-[#6264A7] rounded-full text-xs font-semibold transition-colors text-[#6264A7] hover:bg-[#F5F5FF]"
                                         >
-                                          Pitch
+                                          <Sparkles className="w-3.5 h-3.5" />
+                                          <span>Pitch</span>
                                         </button>
                                       </>
                                     ) : (
@@ -1824,8 +1827,8 @@ Keep it brief and client-ready. NO EMOJIS.`;
                                             onClick={() => handleFlowAction(`Call ${lead.name}`, lead)}
                                             className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-all text-green-600 hover:bg-green-50 ring-0 border-0 outline-none"
                                           >
-                                            <span className="inline-flex items-center gap-1.5">
-                                              <span>📞</span>
+                                            <span className="inline-flex items-center justify-center gap-1.5">
+                                              <Phone className="w-3.5 h-3.5" />
                                               <span>Call</span>
                                             </span>
                                           </button>
@@ -1835,8 +1838,8 @@ Keep it brief and client-ready. NO EMOJIS.`;
                                             onClick={() => handleFlowAction(`Message ${lead.name}`, lead)}
                                             className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-all text-blue-600 hover:bg-blue-50 ring-0 border-0 outline-none"
                                           >
-                                            <span className="inline-flex items-center gap-1.5">
-                                              <span>💬</span>
+                                            <span className="inline-flex items-center justify-center gap-1.5">
+                                              <MessageCircle className="w-3.5 h-3.5" />
                                               <span>Message</span>
                                             </span>
                                           </button>
@@ -1846,8 +1849,8 @@ Keep it brief and client-ready. NO EMOJIS.`;
                                             onClick={() => handleFlowAction(`Generate personalized pitch for ${lead.name}`, lead)}
                                             className="w-full px-3 py-2 bg-white rounded-full text-xs font-medium transition-all text-amber-600 hover:bg-amber-50 ring-0 border-0 outline-none"
                                           >
-                                            <span className="inline-flex items-center gap-1.5">
-                                              <span>✨</span>
+                                            <span className="inline-flex items-center justify-center gap-1.5">
+                                              <Sparkles className="w-3.5 h-3.5" />
                                               <span>Pitch</span>
                                             </span>
                                           </button>
